@@ -1,7 +1,6 @@
 import logging
 from enum import Enum
-from typing import Iterable, Dict, List, Tuple
-
+from typing import Iterable, Dict, List, Tuple, Optional
 from basyx.aas import model
 from basyx.aas.adapter.json import read_aas_json_file
 import neo4j
@@ -24,12 +23,13 @@ class AASToNeo4j:
         self.objs_nodes: Dict[str, model.Identifiable] = {}
         self.global_rels: List[Tuple[str, str, model.Identifiable]] = []
         self.unresolved_global_rels: List[Tuple[str, str, model.Reference]] = []
+
         self.gen_cypher_clauses_for_all_objs()
         self.gen_global_relationship_clauses()
         self.gen_unresolved_global_relationship_clauses()
 
     def get_node_id(self, obj: model.Identifiable) -> str:
-        """Get the unique node ID for a given object."""
+        """Retrieve the unique node ID for a given object."""
         return next(key for key, value in self.objs_nodes.items() if value is obj)
 
     def execute_clauses(self, driver: neo4j.Driver):
@@ -41,14 +41,14 @@ class AASToNeo4j:
 
     def save_clauses_to_file(self, file_name: str):
         """Save the generated Cypher clauses to a file."""
-        with open(file_name, 'w', encoding='utf8') as f:
-            f.write(self.clauses)
+        with open(file_name, 'w', encoding='utf8') as file:
+            file.write(self.clauses)
 
     @classmethod
     def read_aas_json_file(cls, file_path: str) -> 'AASToNeo4j':
         """Read an AAS JSON file and return an instance of AASToNeo4j."""
-        with open(file_path, 'r', encoding='utf8') as f:
-            obj_store = read_aas_json_file(f)
+        with open(file_path, 'r', encoding='utf8') as file:
+            obj_store = read_aas_json_file(file)
         return cls(obj_store)
 
     def gen_cypher_clauses_for_all_objs(self):
@@ -96,8 +96,8 @@ class AASToNeo4j:
         clauses += self.create_node_cmd(variable_name, obj_parent_classes, kwargs)
         self.objs_nodes[variable_name] = obj
 
-        for rel in local_rels:
-            clauses += self.create_relationship_cmd(variable_name, rel[0], self.get_node_id(rel[1]))
+        for rel_type, target_obj in local_rels:
+            clauses += self.create_relationship_cmd(variable_name, rel_type, self.get_node_id(target_obj))
 
         clauses += "\n"
         return clauses
