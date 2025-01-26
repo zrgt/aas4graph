@@ -4,12 +4,25 @@ from basyx.aas.model import Referable, Qualifier, Extension, EmbeddedDataSpecifi
     HasKind, HasSemantics, Namespace, UniqueIdShortNamespace, LangStringSet, ValueReferencePair
 
 NODE_TYPES = (
-    Qualifier, Extension, EmbeddedDataSpecification, AdministrativeInformation, AssetInformation, Resource,
+    AdministrativeInformation,
+    AssetAdministrationShell,
+    AssetInformation,
+    ConceptDescription,
     DataSpecificationContent,
-    Submodel, SubmodelElement,
-    DataSpecificationIEC61360, AssetAdministrationShell, ConceptDescription,
-    LangStringSet, ValueReferencePair)
-RELATIONSHIP_TYPES = (Reference, ModelReference)
+    DataSpecificationIEC61360,
+    EmbeddedDataSpecification,
+    Extension,
+    LangStringSet,
+    Qualifier,
+    Resource,
+    Submodel,
+    SubmodelElement,
+    ValueReferencePair
+)
+RELATIONSHIP_TYPES = (
+    Reference,
+    ModelReference
+)
 
 ATTRS_TO_IGNORE = ('namespace_element_sets', 'self', 'parent', 'source')
 
