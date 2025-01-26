@@ -24,39 +24,16 @@ class AASToNeo4j:
         self.global_rels: List[Tuple[str, str, model.Identifiable]] = []
         self.unresolved_global_rels: List[Tuple[str, str, model.Reference]] = []
 
-        self.gen_cypher_clauses_for_all_objs()
-        self.gen_global_relationship_clauses()
-        self.gen_unresolved_global_relationship_clauses()
+        self._generate_clauses_for_all_objs()
+        self._generate_global_relationship_clauses()
+        self._generate_unresolved_global_relationship_clauses()
 
-    def get_node_id(self, obj: model.Identifiable) -> str:
-        """Retrieve the unique node ID for a given object."""
-        return next(key for key, value in self.objs_nodes.items() if value is obj)
-
-    def execute_clauses(self, driver: neo4j.Driver):
-        """Execute the generated Cypher clauses in the Neo4j database."""
-        with driver.session() as session:
-            result = session.run(self.clauses)
-            for record in result:
-                logger.info(record)
-
-    def save_clauses_to_file(self, file_name: str):
-        """Save the generated Cypher clauses to a file."""
-        with open(file_name, 'w', encoding='utf8') as file:
-            file.write(self.clauses)
-
-    @classmethod
-    def read_aas_json_file(cls, file_path: str) -> 'AASToNeo4j':
-        """Read an AAS JSON file and return an instance of AASToNeo4j."""
-        with open(file_path, 'r', encoding='utf8') as file:
-            obj_store = read_aas_json_file(file)
-        return cls(obj_store)
-
-    def gen_cypher_clauses_for_all_objs(self):
+    def _generate_clauses_for_all_objs(self):
         """Generate Cypher clauses for all objects in the object store."""
         for obj in self.obj_store:
-            self.clauses += self.gen_clauses_for_obj(obj)
+            self.clauses += self._generate_clauses_for_obj(obj)
 
-    def gen_clauses_for_obj(self, obj: model.Identifiable) -> str:
+    def _generate_clauses_for_obj(self, obj: model.Identifiable) -> str:
         """Generate Cypher clauses for a single object."""
         clauses = ""
         local_rels: List[Tuple[str, model.Identifiable]] = []
@@ -84,30 +61,51 @@ class AASToNeo4j:
                 first_value = next(iter(value))
                 if isinstance(first_value, NODE_TYPES):
                     for item in value:
-                        clauses += self.gen_clauses_for_obj(item)
+                        clauses += self._generate_clauses_for_obj(item)
                         local_rels.append((attr, item))
                 elif isinstance(first_value, RELATIONSHIP_TYPES):
                     for item in value:
-                        self.shelve_global_relationship(variable_name, item, attr)
+                        self._shelve_global_relationship(variable_name, item, attr)
                 else:
                     kwargs[attr] = original_value
 
         obj_parent_classes = get_all_parent_classes(obj)
-        clauses += self.create_node_cmd(variable_name, obj_parent_classes, kwargs)
+        clauses += self._create_node_cmd(variable_name, obj_parent_classes, kwargs)
         self.objs_nodes[variable_name] = obj
 
         for rel_type, target_obj in local_rels:
-            clauses += self.create_relationship_cmd(variable_name, rel_type, self.get_node_id(target_obj))
+            clauses += self._create_relationship_cmd(variable_name, rel_type, self.get_node_id(target_obj))
 
         clauses += "\n"
         return clauses
 
-    def create_node_cmd(self, node_name: str, node_types: Iterable[str], properties: Dict[str, any]) -> str:
+    def _generate_global_relationship_clauses(self):
+        """Generate Cypher clauses for global relationships."""
+        for source_key, rel_type, target_obj in self.global_rels:
+            target_node = self.get_node_id(target_obj)
+            self.clauses += self._create_relationship_cmd(source_key, rel_type, target_node)
+
+    def _generate_unresolved_global_relationship_clauses(self):
+        """Generate Cypher clauses for unresolved global relationships."""
+        for source_key, rel_type, rel_obj in self.unresolved_global_rels:
+            unresolved_rel_node_name = gen_unique_obj_name(rel_obj, prefix="UnresolvedRelationship")
+            unresolved_rel_node_types = get_all_parent_classes(rel_obj)
+            unresolved_rel_node_types.append("UnresolvedRelationship")
+
+            last_key = rel_obj.key[-1]
+            properties = {
+                "type": last_key.type,
+                "value": last_key.value
+            }
+            self.clauses += self._create_node_cmd(unresolved_rel_node_name, unresolved_rel_node_types, properties)
+            self.clauses += self._create_relationship_cmd(source_key, rel_type, unresolved_rel_node_name)
+
+    def _create_node_cmd(self, node_name: str, node_types: Iterable[str], properties: Dict[str, any]) -> str:
         """Generate a Cypher command to create a node."""
         kwargs_repr = self._repr_kwargs(properties)
         return f"CREATE ({node_name}:{':'.join(node_types)} {{{kwargs_repr}}})\n"
 
-    def create_relationship_cmd(self, source_node: str, rel_type: str, target_node: str) -> str:
+    def _create_relationship_cmd(self, source_node: str, rel_type: str, target_node: str) -> str:
         """Generate a Cypher command to create a relationship."""
         return f"CREATE ({source_node})-[:{rel_type}]->({target_node})\n"
 
@@ -144,7 +142,7 @@ class AASToNeo4j:
                 logger.warning(f"Skipping {key}: {e}")
         return ', '.join(kwarg_reprs)
 
-    def shelve_global_relationship(self, source_key: str, rel_obj: model.Reference, label: str):
+    def _shelve_global_relationship(self, source_key: str, rel_obj: model.Reference, label: str):
         """Store global relationships for later processing."""
         if not isinstance(rel_obj, RELATIONSHIP_TYPES):
             raise ValueError(f"Unsupported relationship type: {type(rel_obj)}")
@@ -168,26 +166,28 @@ class AASToNeo4j:
         else:
             self.global_rels.append((source_key, label, target_obj))
 
-    def gen_global_relationship_clauses(self):
-        """Generate Cypher clauses for global relationships."""
-        for source_key, rel_type, target_obj in self.global_rels:
-            target_node = self.get_node_id(target_obj)
-            self.clauses += self.create_relationship_cmd(source_key, rel_type, target_node)
+    def get_node_id(self, obj: model.Identifiable) -> str:
+        """Retrieve the unique node ID for a given object."""
+        return next(key for key, value in self.objs_nodes.items() if value is obj)
 
-    def gen_unresolved_global_relationship_clauses(self):
-        """Generate Cypher clauses for unresolved global relationships."""
-        for source_key, rel_type, rel_obj in self.unresolved_global_rels:
-            unresolved_rel_node_name = gen_unique_obj_name(rel_obj, prefix="UnresolvedRelationship")
-            unresolved_rel_node_types = get_all_parent_classes(rel_obj)
-            unresolved_rel_node_types.append("UnresolvedRelationship")
+    def execute_clauses(self, driver: neo4j.Driver):
+        """Execute the generated Cypher clauses in the Neo4j database."""
+        with driver.session() as session:
+            result = session.run(self.clauses)
+            for record in result:
+                logger.info(record)
 
-            last_key = rel_obj.key[-1]
-            properties = {
-                "type": last_key.type,
-                "value": last_key.value
-            }
-            self.clauses += self.create_node_cmd(unresolved_rel_node_name, unresolved_rel_node_types, properties)
-            self.clauses += self.create_relationship_cmd(source_key, rel_type, unresolved_rel_node_name)
+    def save_clauses_to_file(self, file_name: str):
+        """Save the generated Cypher clauses to a file."""
+        with open(file_name, 'w', encoding='utf8') as file:
+            file.write(self.clauses)
+
+    @classmethod
+    def read_aas_json_file(cls, file_path: str) -> 'AASToNeo4j':
+        """Read an AAS JSON file and return an instance of AASToNeo4j."""
+        with open(file_path, 'r', encoding='utf8') as file:
+            obj_store = read_aas_json_file(file)
+        return cls(obj_store)
 
 
 def main():
