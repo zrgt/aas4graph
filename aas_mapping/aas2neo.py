@@ -1,4 +1,6 @@
 import logging
+import os
+import uuid
 from enum import Enum
 from typing import Iterable, Dict, List, Tuple, Optional
 from basyx.aas import model
@@ -7,7 +9,7 @@ import neo4j
 
 from aas_mapping.settings import ATTRS_TO_IGNORE, NODE_TYPES, RELATIONSHIP_TYPES
 from aas_mapping.util_type import isIterable, get_all_parent_classes
-from aas_mapping.utils import gen_unique_obj_name, rm_quotes, add_quotes
+from aas_mapping.utils import rm_quotes, add_quotes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,22 +37,23 @@ class AASToNeo4j:
 
     def _generate_clauses_for_obj(self, obj: model.Identifiable) -> str:
         """Generate Cypher clauses for a single object."""
+        if not isinstance(obj, NODE_TYPES):
+            return ""
+
         clauses = ""
         local_rels: List[Tuple[str, model.Identifiable]] = []
         kwargs: Dict[str, any] = {}
-
-        variable_name = gen_unique_obj_name(obj)
-        if variable_name in self.objs_nodes:
-            raise ValueError(f"Duplicate object name: {variable_name}")
-
-        if not isinstance(obj, NODE_TYPES):
-            return clauses
+        node_name = self._generate_unique_node_name(obj)
+        self.objs_nodes[node_name] = obj
 
         for attr, value in obj.__dict__.items():
+            # FIXME: This is a workaround for the issue that the attribute names are not consistent in Basyx
             attr = attr.strip('_')
             attr = "id_" if attr == "id" else attr
 
-            if attr in ATTRS_TO_IGNORE or value is None or value == "":
+            if (attr in ATTRS_TO_IGNORE or
+                    value is None or
+                    value == ""):
                 continue
 
             original_value = value
@@ -65,16 +68,15 @@ class AASToNeo4j:
                         local_rels.append((attr, item))
                 elif isinstance(first_value, RELATIONSHIP_TYPES):
                     for item in value:
-                        self._shelve_global_relationship(variable_name, item, attr)
+                        self._shelve_global_relationship(node_name, item, attr)
                 else:
                     kwargs[attr] = original_value
 
         obj_parent_classes = get_all_parent_classes(obj)
-        clauses += self._create_node_cmd(variable_name, obj_parent_classes, kwargs)
-        self.objs_nodes[variable_name] = obj
+        clauses += self._create_node_cmd(node_name, obj_parent_classes, kwargs)
 
         for rel_type, target_obj in local_rels:
-            clauses += self._create_relationship_cmd(variable_name, rel_type, self.get_node_id(target_obj))
+            clauses += self._create_relationship_cmd(node_name, rel_type, self.get_node_id(target_obj))
 
         clauses += "\n"
         return clauses
@@ -88,7 +90,7 @@ class AASToNeo4j:
     def _generate_unresolved_global_relationship_clauses(self):
         """Generate Cypher clauses for unresolved global relationships."""
         for source_key, rel_type, rel_obj in self.unresolved_global_rels:
-            unresolved_rel_node_name = gen_unique_obj_name(rel_obj, prefix="UnresolvedRelationship")
+            unresolved_rel_node_name = self._generate_unique_node_name(rel_obj, prefix="UnresolvedRelationship")
             unresolved_rel_node_types = get_all_parent_classes(rel_obj)
             unresolved_rel_node_types.append("UnresolvedRelationship")
 
@@ -148,23 +150,35 @@ class AASToNeo4j:
             raise ValueError(f"Unsupported relationship type: {type(rel_obj)}")
 
         target_obj = None
-        if isinstance(rel_obj, model.ModelReference):
-            try:
+        try:
+            if isinstance(rel_obj, model.ModelReference):
                 target_obj = rel_obj.resolve(self.obj_store)
-            except KeyError:
-                pass
-        elif isinstance(rel_obj, model.Reference):
-            try:
+            elif isinstance(rel_obj, model.Reference):
                 target_obj = self.obj_store.get_identifiable(rel_obj.key[0].value)
-            except KeyError:
-                pass
-        else:
-            raise ValueError(f"Unsupported relationship type: {type(rel_obj)}")
+            else:
+                raise ValueError(f"Unsupported relationship type: {type(rel_obj)}")
+        except KeyError:
+            pass
 
         if target_obj is None:
             self.unresolved_global_rels.append((source_key, label, rel_obj))
         else:
             self.global_rels.append((source_key, label, target_obj))
+
+    def _generate_unique_node_name(self, obj, prefix: str = None):
+        for _ in range(5):
+            if prefix:
+                unique_obj_name = prefix + uuid.uuid4().hex[:6]
+            else:
+                unique_obj_name = obj.__class__.__name__.lower() + uuid.uuid4().hex[:6]
+            logger.info(f"Generated unique object name: {unique_obj_name}")
+
+            if unique_obj_name not in self.objs_nodes:
+                return unique_obj_name
+
+            logger.warning(f"Duplicate object name: {unique_obj_name}")
+        else:
+            raise ValueError("Could not generate unique object name")
 
     def get_node_id(self, obj: model.Identifiable) -> str:
         """Retrieve the unique node ID for a given object."""
@@ -191,25 +205,27 @@ class AASToNeo4j:
 
 
 def main():
-    def remove_all(neo4j_driver: neo4j.Driver):
+    def remove_all():
         """Remove all nodes and relationships from the Neo4j database."""
         with neo4j_driver.session() as session:
             session.run("MATCH (n) DETACH DELETE n")
 
+    def read_and_add_submodels():
+        # iterate over all json files in submodel folder
+        for root, dirs, files in os.walk("submodels"):
+            for file in files:
+                if file.endswith(".json"):
+                    logger.info(f"Processing {file}")
+                    translator = AASToNeo4j.read_aas_json_file(os.path.join(root, file))
+                    translator.execute_clauses(neo4j_driver)
+
+
     neo4j_driver = neo4j.GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
-    remove_all(neo4j_driver)
+    remove_all()
+    read_and_add_submodels()
 
-    # # iterate over all json files in submodel folder
-    # for root, dirs, files in os.walk("submodels"):
-    #     for file in files:
-    #         if file.endswith(".json"):
-    #             print(f"Processing {file}")
-    #             translator = AASToNeo4j.read_aas_json_file(os.path.join(root, file))
-    #             translator.execute_clauses(neo4j_driver)
-    #
-
-    translator = AASToNeo4j.read_aas_json_file("example.json")
-    translator.execute_clauses(neo4j_driver)
+    # translator = AASToNeo4j.read_aas_json_file("example.json")
+    # translator.execute_clauses(neo4j_driver)
 
 
 if __name__ == '__main__':
