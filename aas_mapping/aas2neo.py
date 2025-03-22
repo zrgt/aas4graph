@@ -6,8 +6,9 @@ from typing import Iterable, Dict, List, Tuple, Optional
 from basyx.aas import model
 from basyx.aas.adapter.json import read_aas_json_file
 import neo4j
+from basyx.aas.model import LangStringSet
 
-from aas_mapping.settings import ATTRS_TO_IGNORE, NODE_TYPES, RELATIONSHIP_TYPES
+from aas_mapping.settings import ATTRS_TO_IGNORE, NODE_TYPES, RELATIONSHIP_TYPES, LangString
 from aas_mapping.util_type import isIterable, get_all_parent_classes
 from aas_mapping.utils import rm_quotes, add_quotes
 
@@ -35,7 +36,7 @@ class AASToNeo4j:
         for obj in self.obj_store:
             self.clauses += self._generate_clauses_for_obj(obj)
 
-    def _generate_clauses_for_obj(self, obj: model.Identifiable) -> str:
+    def _generate_clauses_for_obj(self, obj: model.Referable) -> str:
         """Generate Cypher clauses for a single object."""
         if not isinstance(obj, NODE_TYPES):
             return ""
@@ -59,6 +60,8 @@ class AASToNeo4j:
             original_value = value
             if not isIterable(value):
                 value = [value]
+            elif isinstance(value, LangStringSet):
+                value = [LangString(lcode=lcode, value=val) for lcode, val in value.items()]
 
             if len(value) > 0:
                 first_value = next(iter(value))

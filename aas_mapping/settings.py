@@ -1,13 +1,11 @@
 from basyx.aas.model import Referable, Qualifier, Extension, EmbeddedDataSpecification, AdministrativeInformation, \
     AssetInformation, Resource, DataSpecificationContent, Reference, ModelReference, DataSpecificationIEC61360, \
-    AssetAdministrationShell, ConceptDescription, SubmodelElement, Submodel, HasDataSpecification, HasExtension, \
-    HasKind, HasSemantics, Namespace, UniqueIdShortNamespace, LangStringSet, ValueReferencePair
+    HasDataSpecification, HasExtension, HasKind, HasSemantics, Namespace, UniqueIdShortNamespace, LangStringSet, \
+    ValueReferencePair
 
-NODE_TYPES = (
+COMPLEX_TYPES = (
     AdministrativeInformation,
-    AssetAdministrationShell,
     AssetInformation,
-    ConceptDescription,
     DataSpecificationContent,
     DataSpecificationIEC61360,
     EmbeddedDataSpecification,
@@ -15,10 +13,22 @@ NODE_TYPES = (
     LangStringSet,
     Qualifier,
     Resource,
-    Submodel,
-    SubmodelElement,
     ValueReferencePair
 )
+
+
+class LangString:
+    def __init__(self, lcode: str, value: str):
+        self.lcode = lcode
+        self.value = value
+
+
+NODE_TYPES = (
+    Referable,
+    LangString,
+    *COMPLEX_TYPES,
+)
+
 RELATIONSHIP_TYPES = (
     Reference,
     ModelReference
