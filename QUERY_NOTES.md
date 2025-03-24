@@ -1,3 +1,7 @@
+# AAS Query Language
+
+- $match - The $match operator signals that the following clauses (a) contain at least 1 list of elements with [] syntax, and that (b) all conditions shall be evaluated on the same element of this list. (https://admin-shell-io.github.io/aas-specs-antora/IDTA-01002/v3.1/query-language.html#_match_of_elements_in_lists)
+
 # AAS Query Language to Cypher Query
 
 AAS Query (Written in AAS Query Language) -> Cypher Query
@@ -22,8 +26,8 @@ Neo4J Result -> AAS Query Result
 ```
 
 ```cypher
-MATCH (aas:AssetAdministrationShell)-[:assetInformation]->(asset)  
-WHERE aas.idShort = asset.assetType
+MATCH (aas:AssetAdministrationShell)-[:assetInformation]->(assetInformation)  
+WHERE aas.idShort = assetInformation.assetType
 RETURN aas, asset
 ```
 
@@ -64,10 +68,9 @@ RETURN sm
 OR
 
 ```cypher
-MATCH (docs:SubmodelElement)-[:value]->(doc:SubmodelElement)-[:ids_DocumentClassification]->(doc_clas:SubmodelElement)-[:ids_Class]->(class:SubmodelElement),
+MATCH (sme)-[:ids_Documents]->(docs:SubmodelElement)-[:value]->(doc:SubmodelElement)-[:ids_DocumentClassification]->(doc_clas:SubmodelElement)-[:ids_Class]->(class:SubmodelElement),
       (docs)-[:ids_DocumentVersion]->(doc_ver:SubmodelElement)-[:ids_SMLLanguages]->(langs:SubmodelElement)-[:value]->(lang:SubmodelElement)
-WHERE docs.idShort = "Documents" 
-  AND class.value = "03-01"
+WHERE class.value = "03-01"
   AND lang.language = "nl"
 RETURN docs
 ```
