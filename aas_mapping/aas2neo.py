@@ -13,7 +13,7 @@ from aas_mapping.util_type import isIterable, get_all_parent_classes
 from aas_mapping.utils import rm_quotes, add_quotes
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +42,7 @@ class AASToNeo4j:
             return ""
 
         clauses = ""
-        local_rels: List[Tuple[str, model.Identifiable]] = []
+        local_rels: List[Tuple[str, model.Referable]] = []
         kwargs: Dict[str, any] = {}
         node_name = self._generate_unique_node_name(obj)
         self.objs_nodes[node_name] = obj
@@ -69,6 +69,9 @@ class AASToNeo4j:
                     for item in value:
                         clauses += self._generate_clauses_for_obj(item)
                         local_rels.append((attr, item))
+                        if isinstance(item, model.Referable):
+                            local_rels.append(("child", item))
+                            local_rels.append((f"ids_{item.id_short}", item))
                 elif isinstance(first_value, RELATIONSHIP_TYPES):
                     for item in value:
                         self._shelve_global_relationship(node_name, item, attr)
