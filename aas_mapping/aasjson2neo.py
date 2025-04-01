@@ -254,7 +254,7 @@ class AASJSONToNeo4j:
         return root_node_dict
 
 
-class AASCypherClauseGenerator(AASJSONToNeo4j):
+class AASCypherClient(AASJSONToNeo4j):
 
     # TODO: Implement the following methods/parameters:
     # - param: overwrite_existing: bool = False (smth like PATCH)
@@ -373,10 +373,9 @@ class AASCypherClauseGenerator(AASJSONToNeo4j):
         return find_node_clause + get_subgraph_clause
 
 
-
 neo4j_driver = neo4j.GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
 translator = AASJSONToNeo4j(uri="bolt://localhost:7687", user="neo4j", password="password")
-clause_generator = AASCypherClauseGenerator()
+aas_cypher_client = AASCypherClient()
 
 
 def remove_all():
@@ -426,11 +425,12 @@ def main():
     }
     remove_all()
     upload_file()
-    clauses = clause_generator.add_submodel_element(obj, parentid, idShortPath)
-    print(clauses)
-    clauses = clause_generator.remove_referable(parentid, idShortPath)
-    print(clauses)
-    translator.get_referable("Email")
+    result = aas_cypher_client.add_submodel_element(obj, parentid, idShortPath)
+    print(result)
+    result = aas_cypher_client.get_referable(parentid, idShortPath)
+    print(result)
+    result = aas_cypher_client.remove_referable(parentid, idShortPath)
+    print(result)
 
 
 if __name__ == '__main__':
