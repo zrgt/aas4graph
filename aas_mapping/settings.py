@@ -25,6 +25,7 @@ class LangString:
 
 NODE_TYPES = (
     Referable,
+    Reference,
     LangString,
     *COMPLEX_TYPES,
 )

@@ -25,7 +25,9 @@ from enum import Enum
 from typing import Union, Tuple, Iterable, Type, Any, Dict, List
 
 from basyx.aas.model import ModelReference, Reference, AssetAdministrationShell, Submodel, SubmodelElementList, \
-    SubmodelElementCollection, ConceptDescription, ValueReferencePair
+    SubmodelElementCollection, ConceptDescription, ValueReferencePair, Capability, Entity, BasicEventElement, Operation, \
+    RelationshipElement, AnnotatedRelationshipElement, Blob, File, MultiLanguageProperty, Property, Range, \
+    ReferenceElement, DataSpecificationIEC61360
 
 from aas_mapping.settings import IGNORED_PARENT_CLASSES
 
@@ -524,6 +526,36 @@ def getParams4init(objType: Type) -> List[str]:
     return list(paramsAndTypehints.keys())
 
 
-def get_all_parent_classes(obj):
+def get_all_parent_classes_of_cls(cls) -> List[str]:
+    parent_classes = cls.__mro__
+    return [cls.__name__ for cls in parent_classes if cls not in IGNORED_PARENT_CLASSES]
+
+
+def get_all_parent_classes(obj) -> List[str]:
     parent_classes = obj.__class__.__mro__
     return [cls.__name__ for cls in parent_classes if cls not in IGNORED_PARENT_CLASSES]
+
+
+def get_aas_class(class_name: str) -> Type:
+    """Return class by class name"""
+    AAS_CLASSES = {
+        'AssetAdministrationShell': AssetAdministrationShell,
+        'ConceptDescription': ConceptDescription,
+        'Submodel': Submodel,
+        'Capability': Capability,
+        'Entity': Entity,
+        'BasicEventElement': BasicEventElement,
+        'Operation': Operation,
+        'RelationshipElement': RelationshipElement,
+        'AnnotatedRelationshipElement': AnnotatedRelationshipElement,
+        'SubmodelElementCollection': SubmodelElementCollection,
+        'SubmodelElementList': SubmodelElementList,
+        'Blob': Blob,
+        'File': File,
+        'MultiLanguageProperty': MultiLanguageProperty,
+        'Property': Property,
+        'Range': Range,
+        'ReferenceElement': ReferenceElement,
+        'DataSpecificationIec61360': DataSpecificationIEC61360,
+    }
+    return AAS_CLASSES.get(class_name, None)
