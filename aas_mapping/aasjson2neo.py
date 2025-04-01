@@ -321,10 +321,40 @@ def save_clauses_to_file(file_name: str, clauses: CypherClause):
         file.write(clauses)
 
 
+submodels = [
+    "IDTA 02001-1-0_Subomdel_MTPv1.0-rc2-with-documentation.json",
+    "IDTA 02002-1-0_Template_ContactInformation.json",
+    "IDTA 02004-1-2_Template_Handover Documentation.json",
+    "IDTA 02005-1-0_Template_ProvisionOfSimulationModels.json",
+    "IDTA 02006-2-0_Template_Digital Nameplate.json",
+    "IDTA 02007-1-0_Template_Software Nameplate.json",
+    "IDTA 02008-1-1_Template_TimeSeriesData.json",
+    "IDTA 02008-1-1_Template_withOperations_TimeSeriesData.json",
+    "IDTA 02010-1-0_Template_ServiceRequestNotification.json",
+    "IDTA 02011-1-1_Template_HSEBoM.json",
+    "IDTA 02012-1-0_Template_DEXPI.json",
+    "IDTA 02013-1-0_Template_Reliability.json",
+    "IDTA 02014-1-0_Template_FunctionalSafety.json",
+    "IDTA 02015-1-0 _Template_ControlComponentType.json",
+    "IDTA 02016-1-0 _Template_ControlComponentInstance.json",
+    "IDTA 02017-1-0_Template_Asset Interfaces Description.json",
+    "IDTA 02021-1-0_Template_Sizing of Power Drive Trains.json",
+    "IDTA 02022-1-0_Template_Wireless Communication.json",
+    "IDTA02026-1-0_Template_ProvisionOf3DModels.json",
+    "IDTA 02027-1-0_Template_AIMC .json",
+    "IDTA 02034-1-0 Template_BackendSpecificMaterialInformation.json",
+    "IDTA 02045-1-0_Template_DataModelForAssetLocation.json",
+    "IDTA 02046-1-0_Template_WWMD.json",
+    "IDTA 02056-1-0_Template_Data Retention Policies.json",
+    "IDTA_02003-1-2_Template_TechnicalData.json",
+    "IDTA_2023-0-9_Template_CarbonFootprint.json",
+]
+
+
 def main():
     aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="password")
     aas_neo4j_client.remove_all()
-    aas_neo4j_client.upload_aas_json("submodels/IDTA 02006-2-0_Template_Digital Nameplate.json")
+    aas_neo4j_client.upload_aas_json("examples/submodels/IDTA 02006-2-0_Template_Digital Nameplate.json")
 
     parent_id = "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0"
     id_short_path = "ContactInformation.Phone"
