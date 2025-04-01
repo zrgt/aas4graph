@@ -1,0 +1,16 @@
+{
+  "$condition": {
+    "$match": [
+      { "$eq": [
+          { "$field": "$sme.FileVersion[].FileVersionId#value" },
+          { "$strVal": "1.1" }
+        ]
+      },
+      { "$eq": [
+          { "$field": "$sme.FileVersion[].FileName#value" },
+          { "$strVal": "SomeFile" }
+        ]
+      }
+    ]
+  }
+}

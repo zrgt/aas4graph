@@ -1,4 +1,4 @@
-CREATE (dict762732:Unknown {assetKind: 'Type', globalAssetId: 'https://admin-shell.io/idta/asset/DigitalNameplate/2/0', assetType: 'Type'})
+CREATE (dict762732:Unknown {assetKind: 'Type', globalAssetId: 'https://admin-shell.io/idta/asset/DigitalNameplate/2/0', assetType: 'DigitalNameplateAAS'})
 CREATE (dict35cf76:Reference:ModelReference {index: 0, type: 'ModelReference', keys_type: ['Submodel'], keys_value: ['https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0']})
 CREATE (dictf7a332:AssetAdministrationShell:Identifiable:Referable {idShort: 'DigitalNameplateAAS', id: 'https://admin-shell.io/idta/aas/DigitalNameplate/2/0', modelType: 'AssetAdministrationShell'})
 CREATE (dictf7a332)-[:assetInformation]->(dict762732)
