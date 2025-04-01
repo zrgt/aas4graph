@@ -55,12 +55,16 @@ class AASNeo4JClient:
     def optimize_database(self):
         """Optimize the Neo4j database by creating indexes for the Identifiable and Referable nodes."""
         for clause in self.DEFAULT_OPTIMIZATION_CLAUSES:
-            self.execute_clause(clause)
+            try:
+                self.execute_clause(clause)
+            except neo4j.exceptions.ClientError as e:
+                if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
+                    logger.info(f"Index already exists: {clause}")
 
-    def execute_clause(self, clause: CypherClause):
+    def execute_clause(self, clause: CypherClause, single: bool = False):
         """Execute the generated Cypher clauses in the Neo4j database. After execution, the clauses are cleared."""
         with self.driver.session() as session:
-            result = session.run(clause)
+            result = session.run(clause).single() if single else session.run(clause)
             for record in result:
                 logger.info(record)
             return result
@@ -110,7 +114,7 @@ class AASNeo4JClient:
 
     def get_referable(self, parent_id: str, id_short_path: str) -> Dict:
         clauses = self._get_subgraph_of_referable_clause(parent_id, id_short_path)
-        result = self.execute_clause(clauses).single()
+        result = self.execute_clause(clauses, single=True)
         subgraph_json = json.loads(result["json"]) if result else {}
         return self._convert_referable_subgraph_to_dict(subgraph_json)
 
@@ -194,17 +198,23 @@ class AASNeo4JClient:
             logger.warning(f"Duplicate object name: {unique_obj_name}")
         raise ValueError("Could not generate unique object name")
 
-    @staticmethod
-    def _create_node_clause(node_name: str, node_labels: Iterable[str], properties: Dict[str, any]) -> str:
-        repr_as_is_types = (list, int)
+    def _create_node_clause(self, node_name: str, node_labels: Iterable[str], properties: Dict[str, any]) -> str:
         kwargs_repr = ", ".join(
-            f"{key}: {value if isinstance(value, repr_as_is_types) else add_quotes(value)}"
+            f"{key}: {self._repr_property_value_for_clause(value)}"
             for key, value in properties.items()
         )
         return f"CREATE ({node_name}:{':'.join(node_labels)} {{{kwargs_repr}}})\n"
 
-    @staticmethod
-    def _create_relationship_clause(source_node: str, rel_type: str, target_node: str) -> str:
+    def _repr_property_value_for_clause(self, value: any) -> str:
+        repr_as_is_types = (list, int)
+
+        if isinstance(value, repr_as_is_types):
+            return str(value)
+        elif isinstance(value, str):
+            value = value.replace("'", r"\'")
+        return add_quotes(value)
+
+    def _create_relationship_clause(self, source_node: str, rel_type: str, target_node: str) -> str:
         return f"CREATE ({source_node})-[:{rel_type}]->({target_node})\n"
 
     def _find_node_clause(self, parent_id: str, id_short_path: Optional[str] = None) -> Optional[str]:
@@ -319,7 +329,7 @@ def main():
     parent_id = "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0"
     id_short_path = "ContactInformation.Phone"
     obj = {
-        "idShort": "Company",
+        "idShort": "CompanyTest",
         "semanticId": {
             "type": "ExternalReference",
             "keys": [
@@ -348,9 +358,10 @@ def main():
 
     result = aas_neo4j_client.add_submodel_element(obj, parent_id, id_short_path)
     print(result)
-    result = aas_neo4j_client.get_referable(parent_id, id_short_path)
+    added_se_id_short_path = id_short_path + ".CompanyTest"
+    result = aas_neo4j_client.get_referable(parent_id, added_se_id_short_path)
     print(result)
-    result = aas_neo4j_client.remove_referable(parent_id, id_short_path)
+    result = aas_neo4j_client.remove_referable(parent_id, added_se_id_short_path)
     print(result)
 
 
