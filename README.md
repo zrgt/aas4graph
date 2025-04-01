@@ -16,9 +16,8 @@ These clauses are then executed in the Neo4j database.
 3. ``Reference`` is a ``Relationship``
 
 ## Limitation or Not implemented
-- Only Serialization of AAS to Neo4j is implemented, the Deserialization from Neo4j is not
+- Only basic Deserialization from Neo4j is implemented
 - AAS Query Language Mapping to Cypher
-- Works only with ObjStore
 
 # Getting started
 
@@ -26,18 +25,14 @@ These clauses are then executed in the Neo4j database.
 ```
 YOUR_PATH_TO_NEO4J\neo4j-community-5.23.0\bin\neo4j console
 ```
-C:\Users\igor\neo4j\neo4j-community-5.23.0\bin\neo4j console
 
 ## Add the AAS to Neo4j
 
 ```python
-import neo4j
-from aas_mapping.aas2neo import AASToNeo4j
+from aas_mapping.aasjson2neo import AASNeo4JClient
 
-neo4j_driver = neo4j.GraphDatabase.driver("bolt://localhost:7687",
-                                          auth=("neo4j", "password"))
-translator = AASToNeo4j.read_aas_json_file("SOME_AAS.json")
-translator.execute_clause(neo4j_driver)
+aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="password")
+aas_neo4j_client.upload_aas_json("SOME_AAS.json")
 ```
 
 ## Show all nodes in Neo4j Browser
