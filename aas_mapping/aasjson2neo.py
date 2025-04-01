@@ -17,15 +17,14 @@ CypherClause = str
 KEYS_TO_IGNORE = tuple()
 IDENTIFIABLE_KEYS = ("assetAdministrationShells", "submodels", "conceptDescriptions")
 IDENTIFIABLES = ("AssetAdministrationShell", "Submodel", "ConceptDescription")
-
 SPECIFIC_RELATIONSHIPS = ("child", "references")
 
 
 def identify_types(obj: Dict) -> List[str]:
+    """Return the types of the given object."""
     RELATIONSHIP_TYPES = ("ExternalReference", "ModelReference")
     QUALIFIER_KINDS = ("ValueQualifier", "ConceptQualifier", "TemplateQualifier")
 
-    """Identify the type of an object."""
     if "modelType" in obj:
         typ = obj["modelType"]
         basyx_typ = get_aas_class(typ)
@@ -48,9 +47,6 @@ def save_clauses_to_file(file_name: str, clauses: CypherClause):
 
 
 class AASJSONToNeo4j:
-    # TODO: Implement the following methods/parameters:
-    # - method: get_referable_as_json
-
     DEFAULT_OPTIMIZATION_CLAUSES = [
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
@@ -58,73 +54,65 @@ class AASJSONToNeo4j:
     ]
     node_names: Set[str] = set()
 
-    def __init__(self, uri=None, user=None, password=None):
-        if uri:
-            self.driver = neo4j.GraphDatabase.driver(uri, auth=(user, password))
-        else:
-            self.driver = None
+    def __init__(self, uri: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None):
+        self.driver = neo4j.GraphDatabase.driver(uri, auth=(user, password)) if uri else None
 
-    def execute_clauses(self, clauses: CypherClause):
+    def execute_clause(self, clause: CypherClause):
         """Execute the generated Cypher clauses in the Neo4j database. After execution, the clauses are cleared."""
         with self.driver.session() as session:
-            result = session.run(clauses)
+            result = session.run(clause)
             for record in result:
                 logger.info(record)
             return result
 
     @staticmethod
-    def read_file_and_create_clauses(file_path: str) -> CypherClause:
+    def read_file_and_create_clause(file_path: str) -> CypherClause:
         with open(file_path, 'r') as file:
             aas_json = json.load(file)
-        return AASJSONToNeo4j.create_clauses_for_aas_json(aas_json)
+        return AASJSONToNeo4j.create_clause_for_aas_json(aas_json)
 
     @staticmethod
-    def create_clauses_for_aas_json(aas_json: Dict) -> CypherClause:
+    def create_clause_for_aas_json(aas_json: Dict) -> CypherClause:
         clauses = ""
-        for i in IDENTIFIABLE_KEYS:
+        for key in IDENTIFIABLE_KEYS:
             try:
-                for obj in aas_json[i]:
-                    node, obj_clauses, node_labels = AASJSONToNeo4j._create_clauses_for_obj(obj)
+                for obj in aas_json[key]:
+                    _, obj_clauses, _ = AASJSONToNeo4j._create_clause_for_obj(obj)
                     clauses += obj_clauses
             except KeyError:
-                logger.warning(f"Key '{i}' not found in the JSON file")
+                logger.warning(f"Key '{key}' not found in the JSON file")
         return clauses
 
     @staticmethod
-    def _create_clauses_for_obj(obj: Dict, node_properties: Dict[str, any] = None) -> Tuple[str, str, List[str]]:
+    def _create_clause_for_obj(obj: Dict, node_properties: Optional[Dict[str, any]] = None) -> Tuple[str, str, List[str]]:
         clauses = ""
         node_name = AASJSONToNeo4j._gen_unique_node_name(obj)
         node_labels = identify_types(obj)
-        node_properties: Dict[str, any] = node_properties or {}
-        node_rels: List[Tuple[str, str]] = []  # Relationship type and target node
+        node_properties = node_properties or {}
+        node_rels: List[Tuple[str, str]] = []
 
         for key, value in obj.items():
             if key in KEYS_TO_IGNORE:
                 continue
             elif key == "keys" and "Reference" in node_labels:
-                # Reference keys are stored in a list
                 node_properties["keys_type"] = [i["type"] for i in value]
                 node_properties["keys_value"] = [i["value"] for i in value]
-                continue
             elif isinstance(value, dict):
-                child_node_name, child_clauses, child_node_labels = AASJSONToNeo4j._create_clauses_for_obj(value)
+                child_node_name, child_clauses, child_node_labels = AASJSONToNeo4j._create_clause_for_obj(value)
                 clauses += child_clauses
                 if "Referable" in child_node_labels:
                     node_rels.append(("child", child_node_name))
                 node_rels.append((key, child_node_name))
             elif isIterable(value):
-                # List of objects
                 for i, item in enumerate(value, start=0):
                     # Add index to the properties of the internal SubmodelElement
-                    child_node_name, child_clauses, child_node_labels = AASJSONToNeo4j._create_clauses_for_obj(item, {
-                        "index": i})
+                    child_node_name, child_clauses, child_node_labels = AASJSONToNeo4j._create_clause_for_obj(item, {"index": i})
                     clauses += child_clauses
                     if "Referable" in child_node_labels:
                         node_rels.append(("child", child_node_name))
                     node_rels.append((key, child_node_name))
             else:
                 node_properties[key] = value
-                continue
 
         clauses += AASJSONToNeo4j._create_node_clause(node_name, node_labels, node_properties)
         for rel_type, child_node_name in node_rels:
@@ -134,31 +122,21 @@ class AASJSONToNeo4j:
 
     @staticmethod
     def _create_node_clause(node_name: str, node_labels: Iterable[str], properties: Dict[str, any]) -> str:
-        """Generate a Cypher command to create a node."""
-        # kwargs_repr = ', '.join([f"{key}: {add_quotes(value)}" for key, value in properties.items()])
-        kwargs_repr = ""
-        for key, value in properties.items():
-            if isinstance(value, list):
-                kwargs_repr += f"{key}: {value}, "
-            elif isinstance(value, int):
-                kwargs_repr += f"{key}: {value}, "
-            else:
-                kwargs_repr += f"{key}: {add_quotes(value)}, "
-        kwargs_repr = kwargs_repr.rstrip(", ")
+        repr_as_is_types = (list, int)
+        kwargs_repr = ", ".join(
+            f"{key}: {value if isinstance(value, repr_as_is_types) else add_quotes(value)}"
+            for key, value in properties.items()
+        )
         return f"CREATE ({node_name}:{':'.join(node_labels)} {{{kwargs_repr}}})\n"
 
     @staticmethod
     def _create_relationship_clause(source_node: str, rel_type: str, target_node: str) -> str:
-        """Generate a Cypher command to create a relationship."""
         return f"CREATE ({source_node})-[:{rel_type}]->({target_node})\n"
 
     @staticmethod
-    def _gen_unique_node_name(obj, prefix: str = None):
+    def _gen_unique_node_name(obj: Dict, prefix: Optional[str] = None) -> str:
         for _ in range(5):
-            if prefix:
-                unique_obj_name = prefix + uuid.uuid4().hex[:6]
-            else:
-                unique_obj_name = obj.__class__.__name__.lower() + uuid.uuid4().hex[:6]
+            unique_obj_name = (prefix or obj.__class__.__name__.lower()) + uuid.uuid4().hex[:6]
             logger.info(f"Generated unique object name: {unique_obj_name}")
 
             if unique_obj_name not in AASJSONToNeo4j.node_names:
@@ -166,51 +144,44 @@ class AASJSONToNeo4j:
                 return unique_obj_name
 
             logger.warning(f"Duplicate object name: {unique_obj_name}")
-        else:
-            raise ValueError("Could not generate unique object name")
+        raise ValueError("Could not generate unique object name")
 
     @staticmethod
-    def itemize_idShortPath(idShortPath: str) -> List[str]:
+    def itemize_id_short_path(id_short_path: str) -> List[str]:
         """
         Split the idShortPath into a list of idShorts. Dot separated or brackets with index.
+
+        Example "MySubmodelElementCollection.MySubSubmodelElementList2[0][0].MySubTestValue3"
+        Result: ["MySubmodelElementCollection", "MySubSubmodelElementList2", 0, 0, "MySubTestValue3"]
         :param idShortPath: The path to the idShort attribute.
         """
-        # Example "MySubmodelElementCollection.MySubSubmodelElementList2[0][0].MySubTestValue3"
-        # Result: ["MySubmodelElementCollection", "MySubSubmodelElementList2", 0, 0, "MySubTestValue3"]
         pattern = r'([a-zA-Z_]\w*)|\[(\d+)\]'
-        matches = re.findall(pattern, idShortPath)
+        matches = re.findall(pattern, id_short_path)
         result = [match[0] if match[0] else int(match[1]) for match in matches]
         return result
 
     @staticmethod
-    def create_clause_to_find_node(parent_id: str, idShortPath: str = None) -> Optional[str]:
-        """
-        Find the parent node of a SubmodelElement object.
-        :param parent_id: The ID of the parent node. (e.g. Submodel, AssetAdministrationShell, ConceptDescription)
-        :param idShortPath: The path to the idShort attribute.
-        """
-        if not idShortPath:
+    def _find_node_clause(parent_id: str, id_short_path: Optional[str] = None) -> Optional[str]:
+        if not id_short_path:
             return f"MATCH (the_node:Identifiable {{id: '{parent_id}'}})\n"
 
         clause = f"MATCH (parent:Identifiable {{id: '{parent_id}'}})"
-        idShorts = AASJSONToNeo4j.itemize_idShortPath(idShortPath)
-        for i, idShort in enumerate(idShorts):
-            if not i == len(idShorts) - 1:
+        id_shorts = AASJSONToNeo4j.itemize_id_short_path(id_short_path)
+        for i, idShort in enumerate(id_shorts):
+            if not i == len(id_shorts) - 1:
                 clause += f"-[:child]->(child_{i} {{idShort: '{idShort}'}})\n"
             else:
                 clause += f"-[:child]->(the_node {{idShort: '{idShort}'}})\n"
         return clause
 
     @staticmethod
-    def convert_referable_subgraph_to_dict(subgraph):
-        # Create a helper function to convert nodes into dictionaries
-        def convert_node(node):
-            # Extract the node properties
-            node_dict = {key: value for key, value in node['properties'].items()}
-            return node_dict
+    def _convert_referable_subgraph_to_dict(subgraph: Dict) -> Dict:
+        """Take a Neo4J subgraph of a Referable and convert it to a dictionary."""
 
-        # Create a helper function to recursively add related nodes based on relationships
-        def add_relationships(node, node_dict, relationships):
+        def convert_node(node: Dict) -> Dict:
+            return {key: value for key, value in node['properties'].items()}
+
+        def add_relationships(node: Dict, node_dict: Dict, relationships: List[Dict]):
             for rel in relationships:
                 if rel['start']['id'] == node['id']:
                     rel_type = rel['label']
@@ -220,125 +191,74 @@ class AASJSONToNeo4j:
                     related_node_dict = convert_node(related_node)
 
                     if "index" in related_node['properties']:
-                        if rel_type not in node_dict:
-                            node_dict[rel_type] = []
-                        node_dict[rel_type].append(related_node_dict)
+                        node_dict.setdefault(rel_type, []).append(related_node_dict)
                     else:
                         node_dict[rel_type] = related_node_dict
 
                     # Recursively process the related node if it has outgoing relationships
-                    add_relationships(related_node, related_node_dict,
-                                      [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
+                    add_relationships(related_node, related_node_dict, [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
 
                     # Sort list entries by index in the dictionary and remove the index key
                     for key, value in node_dict.items():
                         if isinstance(value, list):
                             node_dict[key] = sorted(value, key=lambda x: x.get('index', 0))
                             for item in node_dict[key]:
-                                if 'index' in item:
-                                    del item['index']
+                                item.pop('index', None)
 
                     if "keys_value" in related_node_dict and "keys_type" in related_node_dict:
-                        related_node_dict["keys"] = [{"type": t, "value": v} for t, v in
-                                                     zip(related_node_dict.pop("keys_type"),
-                                                         related_node_dict.pop("keys_value"))]
+                        related_node_dict["keys"] = [{"type": t, "value": v} for t, v in zip(related_node_dict.pop("keys_type"), related_node_dict.pop("keys_value"))]
 
-        # The root node (Assuming it's the first node in the 'nodes' list)
         root_node = subgraph['nodes'][0]
         root_node_dict = convert_node(root_node)
-
-        # Add the outgoing relationships for the root node
-        add_relationships(root_node, root_node_dict,
-                          [r for r in subgraph['relationships'] if r['start']['id'] == root_node['id']])
-
+        add_relationships(root_node, root_node_dict, [r for r in subgraph['relationships'] if r['start']['id'] == root_node['id']])
         return root_node_dict
 
 
 class AASCypherClient(AASJSONToNeo4j):
+    def add_referable(self, obj: Dict, parent_id: Optional[str] = None, id_short_path: Optional[str] = None):
+        clauses = self._add_referable_clause(obj, parent_id, id_short_path)
+        return self.execute_clause(clauses)
 
-    # TODO: Implement the following methods/parameters:
-    # - param: overwrite_existing: bool = False (smth like PATCH)
+    def add_submodel_element(self, obj: Dict, parent_id: str, id_short_path: str):
+        clauses = self._add_submodel_element_clause(obj, parent_id, id_short_path)
+        return self.execute_clause(clauses)
 
-    def add_referable(self, obj: Dict, parentId: str = None, idShortPath: str = None):
-        """
-        Create and run a Cypher clause to add a Referable object.
-        """
-        clauses = self._add_referable(obj, parentId, idShortPath)
-        return self.execute_clauses(clauses)
+    def add_identifiable(self, obj: Dict):
+        clauses = self._add_referable_clause(obj)
+        return self.execute_clause(clauses)
 
-    def _add_referable(self, obj: Dict, parentId: str = None, idShortPath: str = None) -> CypherClause:
-        """
-        Create a Cypher clause to add a Referable object.
-        :param obj: The Referable object.
-        :param parentId: The ID of the parent node. (e.g. Submodel, AssetAdministrationShell, ConceptDescription)
-        :param idShortPath: The path to the idShort attribute.
-        """
+    def remove_referable(self, parent_id: str, id_short_path: str):
+        clauses = self._remove_referable_clause(parent_id, id_short_path)
+        return self.execute_clause(clauses)
+
+    def get_referable(self, parent_id: str, id_short_path: str) -> Dict:
+        clauses = self._get_subgraph_of_referable_clause(parent_id, id_short_path)
+        result = self.execute_clause(clauses).single()
+        subgraph_json = json.loads(result["json"]) if result else {}
+        return self._convert_referable_subgraph_to_dict(subgraph_json)
+
+    def _add_referable_clause(self, obj: Dict, parent_id: Optional[str] = None, id_short_path: Optional[str] = None) -> CypherClause:
         node_labels = identify_types(obj)
-        if parentId and idShortPath and "Identifiable" not in node_labels:
-            return self.add_submodel_element(self, obj, parentId, idShortPath)
-        elif not parentId and not idShortPath and "Identifiable" in node_labels:
-            return self.add_identifiable(self, obj)
+        if "Identifiable" in node_labels:
+            if parent_id or id_short_path:
+                raise ValueError("Parent ID or ID short path should not be provided for Identifiable objects")
+            _, clauses, _ = self._create_clause_for_obj(obj)
         else:
-            raise ValueError(f"Invalid combination of arguments. "
-                             f"Please provide either parentId and idShortPath or none, if the object is an Identifiable."
-                             f"Provided arguments: parentId={parentId}, idShortPath={idShortPath}, node_labels={node_labels}")
+            if not (parent_id and id_short_path):
+                raise ValueError("Parent ID and ID short path should be provided for Referable objects")
+            clauses = self._add_submodel_element_clause(obj, parent_id, id_short_path)
+        return clauses
 
-    def add_submodel_element(self, obj: Dict, parentId: str, idShortPath: str):
-        """
-        Create and run a Cypher clause to add a SubmodelElement object.
-        """
-        clauses = self._add_submodel_element(obj, parentId, idShortPath)
-        return self.execute_clauses(clauses)
-
-    def _add_submodel_element(self, obj: Dict, parentId: str, idShortPath: str) -> CypherClause:
-        """
-        Create a Cypher clause for a SubmodelElement object.
-        :param obj: The SubmodelElement object.
-        :param parentId: The ID of the parent node. (e.g. Submodel, AssetAdministrationShell, ConceptDescription)
-        :param idShortPath: The path to the idShort attribute.
-        """
-        clauses = self.create_clause_to_find_node(parentId, idShortPath)
-        node_name, obj_clauses, node_labels = self._create_clauses_for_obj(obj)
+    def _add_submodel_element_clause(self, obj: Dict, parent_id: str, id_short_path: str) -> CypherClause:
+        clauses = self._find_node_clause(parent_id, id_short_path)
+        node_name, obj_clauses, _ = self._create_clause_for_obj(obj)
         clauses += obj_clauses
         clauses += self._create_relationship_clause("the_node", "child", node_name)
         clauses += self._create_relationship_clause("the_node", "value", node_name)
         return clauses
 
-    def add_identifiable(self, obj: Dict):
-        """
-        Create and run a Cypher clause to add an Identifiable object.
-        """
-        clauses = self._add_identifiable(obj)
-        return self.execute_clauses(clauses)
-
-    def _add_identifiable(self, obj: Dict) -> CypherClause:
-        """
-        Create a Cypher clause for an Identifiable object.
-        :param obj: The Identifiable object.
-        """
-        node_labels = identify_types(obj)
-        if "Identifiable" not in node_labels:
-            raise ValueError(f"Object is not an Identifiable. Provided node_labels: {node_labels}")
-        node_name, clauses, node_labels = self._create_clauses_for_obj(obj)
-        return clauses
-
-    def remove_referable(self, parentId: str = None, idShortPath: str = None):
-        """
-        Create and run a Cypher clause to remove a Referable object.
-        """
-        clauses = self._remove_referable(parentId, idShortPath)
-        return self.execute_clauses(clauses)
-
-    def _remove_referable(self, parentId: str = None, idShortPath: str = None) -> CypherClause:
-        """
-        Create a Cypher clause to remove a Referable object.
-        :param parentId: The ID of the parent node. (e.g. Submodel, AssetAdministrationShell, ConceptDescription)
-        :param idShortPath: The path to the idShort attribute.
-        """
-        if not parentId or not idShortPath:
-            raise ValueError("Both parent_id and id_short_path must be provided.")
-
-        clauses = self.create_clause_to_find_node(parentId, idShortPath)
+    def _remove_referable_clause(self, parent_id: str, id_short_path: str) -> CypherClause:
+        clauses = self._find_node_clause(parent_id, id_short_path)
         delete_clause = (
             "CALL apoc.path.subgraphAll(the_node, {relationshipFilter: '>'}) YIELD nodes "
             "WHERE NOT EXISTS { MATCH (node)-[:references]-() } "
@@ -347,24 +267,13 @@ class AASCypherClient(AASJSONToNeo4j):
         )
         return clauses + delete_clause
 
-    def get_referable(self, parentId: str, idShortPath: str):
-        """
-        Create and run a Cypher clause to get a Referable object.
-        """
-        clauses = self._get_subgraph_of_referable(parentId, idShortPath)
-
-        with self.driver.session() as session:
-            result = session.run(clauses).single()
-            subgraph_json = json.loads(result["json"]) if result else {}
-        return self.convert_referable_subgraph_to_dict(subgraph_json)
-
-    def _get_subgraph_of_referable(self, parentId: str, idShortPath: str = None) -> CypherClause:
+    def _get_subgraph_of_referable_clause(self, parent_id: str, id_short_path: Optional[str] = None) -> CypherClause:
         """
         Fetches a subgraph of Referable object from Neo4j.
 
         It includes the object node itself and all its children being attributes of the object.
         """
-        find_node_clause = self.create_clause_to_find_node(parentId, idShortPath)
+        find_node_clause = self._find_node_clause(parent_id, id_short_path)
         get_subgraph_clause = (
             "CALL apoc.path.subgraphAll(the_node, {relationshipFilter: '>'}) YIELD nodes, relationships "
             "WHERE NOT EXISTS { MATCH (node)-[:references]-() } "
@@ -372,30 +281,26 @@ class AASCypherClient(AASJSONToNeo4j):
         )
         return find_node_clause + get_subgraph_clause
 
+    def remove_all(self):
+        """Remove all nodes and relationships from the Neo4j database."""
+        with self.driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
 
-neo4j_driver = neo4j.GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
-translator = AASJSONToNeo4j(uri="bolt://localhost:7687", user="neo4j", password="password")
-aas_cypher_client = AASCypherClient()
+    def upload_aas_json(self, file_path: str):
+        """Upload a JSON file to the Neo4j database."""
+        clauses = self.read_file_and_create_clause(file_path)
+        self.execute_clause(clauses)
+        save_clauses_to_file("aasjson.cypher", clauses)
 
-
-def remove_all():
-    """Remove all nodes and relationships from the Neo4j database."""
-    with neo4j_driver.session() as session:
-        session.run("MATCH (n) DETACH DELETE n")
-
-
-def upload_file():
-    """Upload a JSON file to the Neo4j database."""
-    remove_all()
-    clauses = translator.read_file_and_create_clauses(
-        r"C:\Users\igor\PycharmProjects\aas4graph\aas_mapping\submodels\IDTA 02006-2-0_Template_Digital Nameplate_light.json")
-    save_clauses_to_file("aasjson.cypher", clauses)
-    translator.execute_clauses(clauses)
 
 
 def main():
-    parentid = "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0"
-    idShortPath = "ContactInformation.Phone"
+    aas_cypher_client = AASCypherClient(uri="bolt://localhost:7687", user="neo4j", password="password")
+    aas_cypher_client.remove_all()
+    aas_cypher_client.upload_aas_json("submodels/IDTA 02006-2-0_Template_Digital Nameplate.json")
+
+    parent_id = "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0"
+    id_short_path = "ContactInformation.Phone"
     obj = {
         "idShort": "Company",
         "semanticId": {
@@ -423,13 +328,12 @@ def main():
         ],
         "modelType": "MultiLanguageProperty"
     }
-    remove_all()
-    upload_file()
-    result = aas_cypher_client.add_submodel_element(obj, parentid, idShortPath)
+
+    result = aas_cypher_client.add_submodel_element(obj, parent_id, id_short_path)
     print(result)
-    result = aas_cypher_client.get_referable(parentid, idShortPath)
+    result = aas_cypher_client.get_referable(parent_id, id_short_path)
     print(result)
-    result = aas_cypher_client.remove_referable(parentid, idShortPath)
+    result = aas_cypher_client.remove_referable(parent_id, id_short_path)
     print(result)
 
 

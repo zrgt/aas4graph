@@ -29,14 +29,15 @@ YOUR_PATH_TO_NEO4J\neo4j-community-5.23.0\bin\neo4j console
 C:\Users\igor\neo4j\neo4j-community-5.23.0\bin\neo4j console
 
 ## Add the AAS to Neo4j
+
 ```python
 import neo4j
 from aas_mapping.aas2neo import AASToNeo4j
 
-neo4j_driver = neo4j.GraphDatabase.driver("bolt://localhost:7687", 
+neo4j_driver = neo4j.GraphDatabase.driver("bolt://localhost:7687",
                                           auth=("neo4j", "password"))
 translator = AASToNeo4j.read_aas_json_file("SOME_AAS.json")
-translator.execute_clauses(neo4j_driver)
+translator.execute_clause(neo4j_driver)
 ```
 
 ## Show all nodes in Neo4j Browser
