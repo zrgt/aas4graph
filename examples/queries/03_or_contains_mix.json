@@ -1,0 +1,18 @@
+{
+    "$condition": {
+      "$or": [
+        { "$contains": [
+            { "$field": "$sme.Description#value" },
+            { "$strVal": "urgent" }
+          ]
+        },
+        { "$eq": [
+            { "$field": "$sm#idShort" },
+            { "$strVal": "MaintenanceLog" }
+          ]
+        }
+      ]
+    }
+  }
+  
+  

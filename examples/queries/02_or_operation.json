@@ -1,0 +1,18 @@
+{
+    "$condition": {
+      "$or": [
+        { "$eq": [
+            { "$field": "$sme.Material#value" },
+            { "$strVal": "Metal" }
+          ]
+        },
+        { "$le": [
+            { "$field": "$sme.Weight#value" },
+            { "$numVal": 50 }
+          ]
+        }
+      ]
+    }
+  }
+
+  
