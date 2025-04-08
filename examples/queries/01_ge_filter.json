@@ -1,0 +1,10 @@
+{
+    "$condition": {
+      "$ge": [
+        { "$field": "$sme.Weight#value" },
+        { "$numVal": 100 }
+      ]
+    }
+  }
+  
+  

@@ -1,0 +1,10 @@
+{
+    "$condition": {
+      "$ne": [
+        { "$field": "$sme.Material#value" },
+        { "$strVal": "Plastic" }
+      ]
+    }
+  }
+  
+  
