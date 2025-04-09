@@ -82,7 +82,7 @@ class AASNeo4JClient:
                     _, obj_clauses, _ = self._create_clause_for_obj(obj)
                     clauses += obj_clauses
             except KeyError:
-                logger.warning(f"Key '{key}' not found in the JSON file")
+                logger.info(f"Key '{key}' not found in the JSON file")
         return clauses
 
     def remove_all(self):
@@ -188,7 +188,7 @@ class AASNeo4JClient:
 
     def _gen_unique_node_name(self, obj: Dict, prefix: Optional[str] = None) -> str:
         for _ in range(5):
-            unique_obj_name = (prefix or obj.__class__.__name__.lower()) + uuid.uuid4().hex[:6]
+            unique_obj_name = (prefix or obj.__class__.__name__.lower()) + uuid.uuid4().hex[:10]
             logger.info(f"Generated unique object name: {unique_obj_name}")
 
             if unique_obj_name not in self.node_names:
