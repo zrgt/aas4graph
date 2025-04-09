@@ -45,6 +45,13 @@ class AASNeo4JClient:
         'ReferenceElement': ('DataElement', 'SubmodelElement', 'Referable', 'Qualifiable',),
         'DataSpecificationIec61360': ('DataSpecificationContent',),
     }
+    # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
+    COMPLEX_VALUE_LIST_AS_MULTIPLE_SIMPLE_VALUE_LISTS = {
+        "DataSpecificationIec61360": ["preferredName", "shortName", "definition"],
+        "Reference": ["keys"],
+        # "Qualifiable": ["qualifiers"], The problem is that qualifier can have a SemanticId
+        "Referable": ["description", "displayName"],
+    }
     node_names: Set[str] = set()
 
     def __init__(self, uri: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None):
@@ -154,15 +161,21 @@ class AASNeo4JClient:
         clauses = ""
         node_name = self._gen_unique_node_name(obj)
         node_labels = self.identify_types(obj)
+        # unpack the DICTS_TO_PROPERTY_LISTS
+        node_property_dicts_as_lists = self._get_props_to_model_as_multiple_lists(node_labels)
         node_properties = node_properties or {}
         node_rels: List[Tuple[str, str]] = []
 
         for key, value in obj.items():
             if key in KEYS_TO_IGNORE:
                 continue
-            elif key == "keys" and "Reference" in node_labels:
-                node_properties["keys_type"] = [i["type"] for i in value]
-                node_properties["keys_value"] = [i["value"] for i in value]
+            elif key in node_property_dicts_as_lists:
+                # BEFORE: keys = [{"type": "GlobalReference", "value": "0173-1#02-AAW001#001"}}, ...]
+                # AFTER:  keys_type = ["GlobalReference", ...]
+                #         keys_value = ["0173-1#02-AAW001#001", ...]
+                if value:
+                    for dict_key in value[0].keys():
+                        node_properties[f"{key}_{dict_key}"] = [dict_[dict_key] for dict_ in value]
             elif isinstance(value, dict):
                 child_node_name, child_clauses, child_node_labels = self._create_clause_for_obj(value)
                 clauses += child_clauses
@@ -185,6 +198,17 @@ class AASNeo4JClient:
             clauses += self._create_relationship_clause(node_name, rel_type, child_node_name)
 
         return node_name, clauses, node_labels
+
+    def _get_props_to_model_as_multiple_lists(self, node_labels: List[str]) -> List[str]:
+        """
+        Get the node properties that are list of dictionaries and should be converted to property lists.
+        """
+        property_list_of_dicts_to_model_as_multiple_lists = []
+        for label in node_labels:
+            if label in self.COMPLEX_VALUE_LIST_AS_MULTIPLE_SIMPLE_VALUE_LISTS:
+                property_list_of_dicts_to_model_as_multiple_lists.extend(self.COMPLEX_VALUE_LIST_AS_MULTIPLE_SIMPLE_VALUE_LISTS[label])
+        return property_list_of_dicts_to_model_as_multiple_lists
+
 
     def _gen_unique_node_name(self, obj: Dict, prefix: Optional[str] = None) -> str:
         for _ in range(5):
@@ -236,6 +260,13 @@ class AASNeo4JClient:
         def convert_node(node: Dict) -> Dict:
             return {key: value for key, value in node['properties'].items()}
 
+        def create_list_of_dicts(*lists: List[List[any]], keys: List[str]) -> List[Dict]:
+            if len(keys) != len(lists):
+                raise ValueError("Number of keys must match number of input lists.")
+
+            objs = [dict(zip(keys, values)) for values in zip(*lists)]
+            return objs
+
         def add_relationships(node: Dict, node_dict: Dict, relationships: List[Dict]):
             for rel in relationships:
                 if rel['start']['id'] == node['id']:
@@ -256,13 +287,28 @@ class AASNeo4JClient:
 
                     # Sort list entries by index in the dictionary and remove the index key
                     for key, value in node_dict.items():
-                        if isinstance(value, list):
+                        if value and isinstance(value, list) and isinstance(value[0], dict) and value[0].get('index') is not None:
                             node_dict[key] = sorted(value, key=lambda x: x.get('index', 0))
                             for item in node_dict[key]:
                                 item.pop('index', None)
 
-                    if "keys_value" in related_node_dict and "keys_type" in related_node_dict:
-                        related_node_dict["keys"] = [{"type": t, "value": v} for t, v in zip(related_node_dict.pop("keys_type"), related_node_dict.pop("keys_value"))]
+                    # Handle specific keys for certain node types
+                    related_node_labels = related_node['labels']
+                    props_list_of_dicts = self._get_props_to_model_as_multiple_lists(related_node_labels)
+                    if props_list_of_dicts:
+                        for original_prop in props_list_of_dicts:
+                            original_prop_prefix = original_prop + "_"
+
+                            # Find all keys that belong to this original_prop
+                            part_attr_keys = [key for key in related_node_dict if key.startswith(original_prop_prefix)]
+
+                            if not part_attr_keys:
+                                continue
+
+                            # Extract lists and strip the prefix from keys
+                            lists = [related_node_dict.pop(key) for key in part_attr_keys]
+                            keys = [key.removeprefix(original_prop_prefix) for key in part_attr_keys]
+                            related_node_dict[original_prop] = create_list_of_dicts(*lists, keys=keys)
 
         root_node = subgraph['nodes'][0]
         root_node_dict = convert_node(root_node)
