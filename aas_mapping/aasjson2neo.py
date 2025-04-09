@@ -1,6 +1,7 @@
 import logging
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Dict, List, Tuple, Optional, Set
 import neo4j
 import json
@@ -369,46 +370,69 @@ def save_clauses_to_file(file_name: str, clauses: CypherClause):
 
 def main():
     aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="password")
-    aas_neo4j_client.remove_all()
-    aas_neo4j_client.upload_aas_json("examples/submodels/IDTA 02006-2-0_Template_Digital Nameplate.json")
 
-    parent_id = "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0"
-    id_short_path = "ContactInformation.Phone"
-    obj = {
-        "idShort": "CompanyTest",
-        "semanticId": {
-            "type": "ExternalReference",
-            "keys": [
+    def upload_all_submodels():
+        # iterate over all files in the directory "examples/submodels"
+        # and create a Cypher clause for each file
+        import os
+        clauses = []
+        submodels_folder = "examples/submodels/"
+        for file in os.listdir(submodels_folder):
+            print("Reading file:", file)
+            clauses.append(aas_neo4j_client.read_file_and_create_clause(os.path.join(submodels_folder, file)))
+
+        aas_neo4j_client.remove_all()
+        # set timer
+        import time
+        start_time = time.time()
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            executor.map(aas_neo4j_client.execute_clause, clauses)
+        end_time = time.time()
+        print(f"Execution time: {end_time - start_time} seconds")
+
+    def add_get_remove_referable():
+        aas_neo4j_client.remove_all()
+        aas_neo4j_client.upload_aas_json("examples/submodels/IDTA 02006-2-0_Template_Digital Nameplate.json")
+
+        parent_id = "https://admin-shell.io/idta/SubmodelTemplate/DigitalNameplate/2/0"
+        id_short_path = "ContactInformation.Email"
+        obj = {
+            "idShort": "CompanyTest",
+            "semanticId": {
+                "type": "ExternalReference",
+                "keys": [
+                    {
+                        "type": "GlobalReference",
+                        "value": "0173-1#02-AAW001#001"
+                    }
+                ]
+            },
+            "qualifiers": [
                 {
-                    "type": "GlobalReference",
-                    "value": "0173-1#02-AAW001#001"
+                    "kind": "ConceptQualifier",
+                    "type": "Multiplicity",
+                    "valueType": "xs:string",
+                    "value": "ZeroToOne"
                 }
-            ]
-        },
-        "qualifiers": [
-            {
-                "kind": "ConceptQualifier",
-                "type": "Multiplicity",
-                "valueType": "xs:string",
-                "value": "ZeroToOne"
-            }
-        ],
-        "value": [
-            {
-                "language": "en",
-                "text": "ABC Company"
-            }
-        ],
-        "modelType": "MultiLanguageProperty"
-    }
+            ],
+            "value": [
+                {
+                    "language": "en",
+                    "text": "ABC Company"
+                }
+            ],
+            "modelType": "MultiLanguageProperty"
+        }
 
-    result = aas_neo4j_client.add_submodel_element(obj, parent_id, id_short_path)
-    print(result)
-    added_se_id_short_path = id_short_path + ".CompanyTest"
-    result = aas_neo4j_client.get_referable(parent_id, added_se_id_short_path)
-    print(result)
-    result = aas_neo4j_client.remove_referable(parent_id, added_se_id_short_path)
-    print(result)
+        result = aas_neo4j_client.add_submodel_element(obj, parent_id, id_short_path)
+        print(result)
+        added_se_id_short_path = id_short_path + ".CompanyTest"
+        result = aas_neo4j_client.get_referable(parent_id, added_se_id_short_path)
+        print(result)
+        result = aas_neo4j_client.remove_referable(parent_id, added_se_id_short_path)
+        print(result)
+
+    upload_all_submodels()
 
 
 if __name__ == '__main__':
