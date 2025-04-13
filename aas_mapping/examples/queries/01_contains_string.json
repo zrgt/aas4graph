@@ -1,0 +1,9 @@
+{
+    "$condition": {
+      "$contains": [
+        { "$field": "$sme.Description#value" },
+        { "$strVal": "high-quality" }
+      ]
+    }
+  }
+  
