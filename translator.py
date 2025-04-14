@@ -1,168 +1,225 @@
 import json
+import re
 
-def translate_condition(condition, context):
-    if "$eq" in condition:
-        field, value = condition["$eq"]
-        cypher_field = translate_field(field, context)
-        cypher_value = translate_value(value, context)
-        return f"{cypher_field} = {cypher_value}"
-    elif "$gt" in condition:
-        field, value = condition["$gt"]
-        return f"{translate_field(field, context)} > {translate_value(value, context)}"
-    elif "$lt" in condition:
-        field, value = condition["$lt"]
-        return f"{translate_field(field, context)} < {translate_value(value, context)}"
-    elif "$contains" in condition:
-        field = condition["$contains"][0]["$field"]
-        value = condition["$contains"][1].get("$strVal")
-        return f"{translate_field({'$field': field}, context)} CONTAINS '{value}'"
-    elif "$and" in condition:
-        return " AND ".join([translate_condition(cond, context) for cond in condition["$and"]])
-    elif "$or" in condition:
-        return " OR ".join([translate_condition(cond, context) for cond in condition["$or"]])
-    elif "$match" in condition:
-        return " AND ".join([translate_condition(cond, context) for cond in condition["$match"]])
-    return ""
+# ─────────────────────────────────────────────────────────────
+# Helper: parse a field path string into its parts
+# ─────────────────────────────────────────────────────────────
+def parse_field_path(field_str):
+    """
+    Parses a field string like:
+      "$sme.FileVersion[].FileVersionId#value"
+    into a tuple (prefix, segments) where:
+      - prefix is either "sme" or "sm"
+      - segments is a list of dicts with keys:
+           "name": (e.g., "FileVersion"),
+           "array": (True if [] is present),
+           "prop": (e.g., "value" from "#value"; if missing, defaults to None)
+    For fields without a dot (e.g. "$sme#semanticId") the segment has no name.
+    """
+    if field_str.startswith("$sme."):
+        prefix = "sme"
+        remaining = field_str[len("$sme."):]
+    elif field_str.startswith("$sme#"):
+        prefix = "sme"
+        remaining = field_str[len("$sme#"):]
+    elif field_str.startswith("$sm."):
+        prefix = "sm"
+        remaining = field_str[len("$sm."):]
+    elif field_str.startswith("$sm#"):
+        prefix = "sm"
+        remaining = field_str[len("$sm#"):]
+    else:
+        prefix = ""
+        remaining = field_str
 
-def translate_field(field, context):
-    if isinstance(field, dict) and "$field" in field:
-        field = field["$field"]
+    segments = []
+    if remaining:
+        parts = remaining.split('.')
+        for part in parts:
+            # Check for array marker "[]" (can appear together with a property indicator)
+            is_array = "[]" in part
+            part = part.replace("[]", "")
+            if "#" in part:
+                name, prop = part.split("#", 1)
+            else:
+                name, prop = part, None
+            segments.append({"name": name if name else None, "array": is_array, "prop": prop})
+    else:
+        # if nothing remains, treat it as a property-only segment
+        segments.append({"name": None, "array": False, "prop": remaining})
+    return prefix, segments
 
-    if field == "$sm#idShort":
-        return "sm0.idShort"
-    elif field == "$aas#idShort":
-        return "aas.idShort"
-    elif field == "$aas#assetInformation.assetType":
-        return "assetInformation.assetType"
-    elif field == "$sme#semanticId":
-        return "sme3.semanticId"
-    elif field == "$sme#value":
-        return "sme3.value"
-    
-    if field.startswith("$sme") or field.startswith("$sm"):
-        context["paths"].add(field)
-        parts = field.split(".")
-        leaf = parts[-1]
-        if "#" in leaf:
-            attr = leaf.split("#")[-1]
+# ─────────────────────────────────────────────────────────────
+# MATCH Pattern Builder class
+# ─────────────────────────────────────────────────────────────
+class MatchPatternBuilder:
+    def __init__(self, context):
+        self.context = context
+        self.context.setdefault("clauses", [])
+        self.context.setdefault("var_counter", {"sme": 0, "mlp": 0, "ls": 0})
+        self.registered = {}
+        self.sm0_labeled = False
+
+    def get_next_var(self, prefix):
+        count = self.context["var_counter"].get(prefix, 0)
+        self.context["var_counter"][prefix] = count + 1
+        # if prefix == "sme" and count == 0:
+        #     return "sme"
+        return f"{prefix}{count}"
+
+    def register_chain(self, field_str):
+        if field_str in self.registered:
+            return self.registered[field_str]
+
+        prefix, segments = parse_field_path(field_str)
+
+        current_var = "sm0"
+        prev_was_array = False
+
+        for i, seg in enumerate(segments):
+            is_last = (i == len(segments) - 1)
+
+            # Choose rel type
+            if seg["name"]:
+                rel = "[:child]"
+            else:
+                rel = "[:child*0..]"
+
+            # Apply label inline on first use of sm0
+            if current_var == "sm0" and not self.sm0_labeled:
+                current_var = "sm0:Submodel"
+                self.sm0_labeled = True
+
+            # If previous was array, insert an intermediate node
+            if prev_was_array:
+                inter_var = self.get_next_var("sme")
+                self.context["clauses"].append(f"({current_var})-[:child]->({inter_var}:SubmodelElement)")
+                current_var = inter_var
+                prev_was_array = False
+
+            if seg["prop"] == "language" and is_last:
+                mlp_var = self.get_next_var("mlp")
+                ls_var = self.get_next_var("ls")
+                self.context["clauses"].append(
+                    f"({current_var})-[:child]->({mlp_var}:MultiLanguageProperty {{idShort: \"{seg['name']}\"}})"
+                )
+                self.context["clauses"].append(f"({mlp_var})-[:value]->({ls_var}:LangString)")
+                current_var = ls_var
+            elif seg["name"]:
+                next_var = self.get_next_var("sme")
+                clause = f"({current_var})-{rel}->({next_var}:SubmodelElement {{idShort: \"{seg['name']}\"}})"
+                self.context["clauses"].append(clause)
+                current_var = next_var
+            else:
+                next_var = self.get_next_var("sme")
+                clause = f"({current_var})-{rel}->({next_var}:SubmodelElement)"
+                self.context["clauses"].append(clause)
+                current_var = next_var
+
+            prev_was_array = seg["array"]
+
+        self.registered[field_str] = current_var
+        return current_var
+
+    def generate(self):
+        if self.context["clauses"]:
+            unique_clauses = list(dict.fromkeys(self.context["clauses"]))
+            return "MATCH " + ",\n      ".join(unique_clauses)
+        return ""
+
+# ─────────────────────────────────────────────────────────────
+# Field Translator uses the match builder to determine the final node
+# ─────────────────────────────────────────────────────────────
+class FieldTranslator:
+    def __init__(self, context, match_builder):
+        self.context = context
+        self.match_builder = match_builder
+
+    def translate(self, field):
+        # Expecting field as a dict like { "$field": "$sme.Material#value" }
+        if isinstance(field, dict) and "$field" in field:
+            field_str = field["$field"]
         else:
-            attr = "value"
-        var_name = get_variable_from_field(field, context)
-        if attr == "language":
-            return "ls0.language"
-        return f"{var_name}.{attr}"
-    
-    return field
+            field_str = field
 
-def get_variable_from_field(field, context):
-    # Extracts the last SubmodelElement name to use the right variable
-    parts = field.split(".")
-    for part in reversed(parts):
-        if "#" not in part:
-            idshort = part.replace("[]", "")
-            return context["field_var_map"].get(idshort, "sme3")
-    return "sme3"
+        final_var = self.match_builder.register_chain(field_str)
 
-def translate_value(value, context):
-    if isinstance(value, dict):
-        if "$numVal" in value:
-            return str(value["$numVal"])
-        elif "$strVal" in value:
-            return f"'{value['$strVal']}'"
-        elif "$field" in value:
-            return translate_field(value, context)
-    return str(value)
+        # Get property from last segment
+        _, segments = parse_field_path(field_str)
+        prop = segments[-1]["prop"] if segments[-1]["prop"] else "value"
 
-def generate_match_patterns(context):
-    matches = set()
-    for path in context["paths"]:
-        parts = path.split(".")[1:]  # skip "$sme"
-        var_chain = []
-        parent = "sm0"
-        for i, part in enumerate(parts):
-            clean_part = part.replace("[]", "")
-            if "#" in clean_part:
-                clean_part = clean_part.split("#")[0]
-            var = f"sme{i}"
-            context["field_var_map"][clean_part] = var
-            match = f"({parent})-[:child]->({var}:SubmodelElement {{idShort:'{clean_part}'}})"
-            var_chain.append(match)
-            parent = var
-        matches.add(", ".join(var_chain))
-    
-    # Handle specific cases for language strings
-    if any("language" in p for p in context["paths"]):
-        matches.add("(mlp0)-[:value]->(ls0:LangString)")
-    return "MATCH " + ",\n      ".join(matches)
+        return f"{final_var}.{prop}"
 
-def translate_aas_to_cypher(aas_query):
-    context = {
-        "paths": set(),
-        "field_var_map": {}
-    }
+# ─────────────────────────────────────────────────────────────
+# Condition Translator
+# ─────────────────────────────────────────────────────────────
+class ConditionTranslator:
+    def __init__(self, context, match_builder):
+        self.context = context
+        self.field_translator = FieldTranslator(context, match_builder)
 
-    # Special case (Query 1)
-    condition = aas_query.get("$condition", {})
-    if "$eq" in condition:
-        eq_cond = condition["$eq"]
-        if eq_cond[0].get("$field") == "$aas#idShort" and eq_cond[1].get("$field") == "$aas#assetInformation.assetType":
-            return (
-                "MATCH (aas:AssetAdministrationShell)-[:assetInformation]->(assetInformation)\n"
-                "WHERE aas.idShort = assetInformation.assetType\n"
-                "RETURN aas"
-            )
+    def translate(self, condition):
+        if "$eq" in condition:
+            field, value = condition["$eq"]
+            return f"{self.field_translator.translate(field)} = {self.translate_value(value)}"
+        elif "$ne" in condition:
+            field, value = condition["$ne"]
+            return f"{self.field_translator.translate(field)} <> {self.translate_value(value)}"
+        elif "$gt" in condition:
+            field, value = condition["$gt"]
+            return f"{self.field_translator.translate(field)} > {self.translate_value(value)}"
+        elif "$lt" in condition:
+            field, value = condition["$lt"]
+            return f"{self.field_translator.translate(field)} < {self.translate_value(value)}"
+        elif "$ge" in condition:
+            field, value = condition["$ge"]
+            return f"{self.field_translator.translate(field)} >= {self.translate_value(value)}"
+        elif "$le" in condition:
+            field, value = condition["$le"]
+            return f"{self.field_translator.translate(field)} <= {self.translate_value(value)}"
+        elif "$contains" in condition:
+            # For $contains, the second operand is expected to be a string value.
+            field_obj = condition["$contains"][0]
+            value_obj = condition["$contains"][1]
+            return f"{self.field_translator.translate(field_obj)} CONTAINS {self.translate_value(value_obj)}"
+        elif "$and" in condition:
+            return " AND ".join([self.translate(cond) for cond in condition["$and"]])
+        elif "$or" in condition:
+            return " OR ".join([self.translate(cond) for cond in condition["$or"]])
+        elif "$match" in condition:
+            return " AND ".join([self.translate(cond) for cond in condition["$match"]])
+        elif "$regex" in condition:
+            field, value = condition["$regex"]
+            return f"{self.field_translator.translate(field)} =~ {self.translate_value(value)}"
+        elif "$starts-with" in condition:
+            field, value = condition["$starts-with"]
+            return f"{self.field_translator.translate(field)} STARTS WITH {self.translate_value(value)}"
+        return ""
 
-    where_clause = translate_condition(aas_query.get("$condition", {}), context)
-    match_clause = generate_match_patterns(context)
+    def translate_value(self, value):
+        if isinstance(value, dict):
+            if "$numVal" in value:
+                return str(value["$numVal"])
+            elif "$strVal" in value:
+                return f"'{value['$strVal']}'"
+            elif "$field" in value:
+                return self.field_translator.translate(value)
+        return str(value)
 
-    return f"""{match_clause}
+# ─────────────────────────────────────────────────────────────
+# AAS Query Translator (ties all the pieces together)
+# ─────────────────────────────────────────────────────────────
+class AASQueryTranslator:
+    def __init__(self, aas_query):
+        self.aas_query = aas_query
+        self.context = {}
+        self.match_builder = MatchPatternBuilder(self.context)
+
+    def translate(self):
+        condition = self.aas_query.get("$condition", {})
+        cond_translator = ConditionTranslator(self.context, self.match_builder)
+        where_clause = cond_translator.translate(condition)
+        match_clause = self.match_builder.generate()
+        return f"""{match_clause}
 WHERE {where_clause}
 RETURN sm0"""
-
-# Example usage with one of your queries:
-if __name__ == "__main__":
-    examples = [
-        {
-            "$condition": {
-                "$eq": [
-                    {"$field": "$aas#idShort"},
-                    {"$field": "$aas#assetInformation.assetType"}
-                ]
-            }
-        },
-        {
-            "$condition": {
-                "$match": [
-                    {"$eq": [{"$field": "$sme.FileVersion[].FileVersionId#value"}, {"$strVal": "1.1"}]},
-                    {"$eq": [{"$field": "$sme.FileVersion[].FileName#value"}, {"$strVal": "SomeFile"}]}
-                ]
-            }
-        },
-        {
-            "$condition": {
-                "$match": [
-                    {"$eq": [{"$field": "$sme.Documents[].DocumentClassification.Class#value"}, {"$strVal": "03-01"}]},
-                    {"$eq": [{"$field": "$sme.Documents[].DocumentVersion.SMLLanguages[]#language"}, {"$strVal": "nl"}]}
-                ]
-            }
-        },
-        {
-            "$condition": {
-                "$and": [
-                    {"$match": [
-                        {"$eq": [{"$field": "$sm#idShort"}, {"$strVal": "TechnicalData"}]},
-                        {"$eq": [{"$field": "$sme.ProductClassifications.ProductClassificationItem.ProductClassId#value"}, {"$strVal": "27-37-09-05"}]}
-                    ]},
-                    {"$match": [
-                        {"$eq": [{"$field": "$sm#idShort"}, {"$strVal": "TechnicalData"}]},
-                        {"$eq": [{"$field": "$sme#semanticId"}, {"$strVal": "0173-1#02-BAF016#006"}]},
-                        {"$lt": [{"$field": "$sme#value"}, {"$numVal": 100}]}
-                    ]}
-                ]
-            }
-        }
-    ]
-
-    for i, ex in enumerate(examples, 1):
-        print(f"\n--- Query {i} ---")
-        print(translate_aas_to_cypher(ex))
