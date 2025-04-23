@@ -1,0 +1,11 @@
+{
+    "$condition": {
+      "$not": {
+        "$eq": [
+          { "$field": "$sme.Status#value" },
+          { "$strVal": "Inactive" }
+        ]
+      }
+    }
+  }
+  
