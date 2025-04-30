@@ -54,6 +54,67 @@ if __name__ == "__main__":
 
     unittest.main()
 
+#         # ================================
+# # Manual translation tests
+# # ================================
+
+# # Define all your hardcoded queries
+#   queries = {
+#     "01_starts_with": {
+#   "$condition": {
+#     "$starts-with": [
+#           { "$field": "$sme.EmailAddress#value" },
+#           { "$strVal": "email@" }    
+#     ]
+#   }
+# },
+#     "02_regex_serial_number": {
+#   "$condition": {
+#     "$regex": [
+#       { "$field": "$sme.SerialNumber#value" },
+#       { "$strVal": "^[0-9]{8}$" }
+#     ]
+#   }
+# },
+#     "03_contains": {
+#   "$condition": {
+#     "$contains": [
+#       { "$field": "$sme.URIOfTheProduct#value" },
+#       { "$strVal": "domain-abc" }
+#     ]
+#   }
+# },
+#     "04_ge_year_of_construction": {
+#   "$condition": {
+#     "$ge": [
+#       { "$field": "$sme.YearOfConstruction#value" },
+#       { "$numVal": 2020 }
+#     ]
+#   }
+# },
+#     "05_ne_country_of_origin": {
+#   "$condition": {
+#     "$ne": [
+#       { "$field": "$sme.CountryOfOrigin#value" },
+#       { "$strVal": "US" }
+#     ]
+#   }
+# }
+# }
+
+# # Translate and print each one
+# for name, aas_query in queries.items():
+#     print("\n---")
+#     print(f"Translating query: {name}")
+#     translator = AASQueryTranslator(aas_query)
+#     cypher_output = translator.translate()
+#     print("Generated Cypher:")
+#     print(cypher_output)
+#     print("---\n")
+
+
+
+
 
 
 # import unittest
