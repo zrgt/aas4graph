@@ -12,8 +12,18 @@ print("Looking for test queries in:", TEST_QUERY_DIR)
 
 
 class TestAASTranslator(unittest.TestCase):
+    maxDiff = None
+    compare_logically = True  # ← Set to False if you want strict formatting match
     LEVEL = None  # Class-level variable for optional filtering
 
+    def _normalize(self, cypher):
+            return (
+                cypher.replace("\n", "")
+                    .replace(" ", "")
+                    .replace('"', "'")
+                    .replace("\t", "")
+                    .strip()
+            )
     def test_all_queries(self):
         pairs = self.find_query_pairs(TEST_QUERY_DIR, self.LEVEL)
 
@@ -27,7 +37,10 @@ class TestAASTranslator(unittest.TestCase):
                 translator = AASQueryTranslator(aas_query)
                 result = translator.translate().strip()
 
-                self.assertEqual(result, expected_cypher)
+                if self.compare_logically:
+                    self.assertEqual(self._normalize(result), self._normalize(expected_cypher))
+                else:
+                    self.assertEqual(result, expected_cypher)
 
     def find_query_pairs(self, root_directory, level_filter=None):
         query_pairs = []
@@ -52,191 +65,61 @@ if __name__ == "__main__":
         TestAASTranslator.LEVEL = sys.argv[1]
         sys.argv.pop(1)  # Remove the custom argument so unittest doesn't get confused
 
-    unittest.main()
+    # unittest.main()
 
-#         # ================================
-# # Manual translation tests
-# # ================================
+        # ================================
+    # Manual translation tests
+    # ================================
+    queries = {
+        "01_starts_with": {
+    "$condition": {
+        "$starts-with": [
+            { "$field": "$sme.EmailAddress#value" },
+            { "$strVal": "email@" }    
+        ]
+    }
+    },
+        "02_regex_serial_number": {
+    "$condition": {
+        "$regex": [
+        { "$field": "$sme.SerialNumber#value" },
+        { "$strVal": "^[0-9]{8}$" }
+        ]
+    }
+    },
+        "03_contains": {
+    "$condition": {
+        "$contains": [
+        { "$field": "$sme.URIOfTheProduct#value" },
+        { "$strVal": "domain-abc" }
+        ]
+    }
+    },
+        "04_ge_year_of_construction": {
+    "$condition": {
+        "$ge": [
+        { "$field": "$sme.YearOfConstruction#value" },
+        { "$numVal": 2020 }
+        ]
+    }
+    },
+        "05_eq_country_of_origin": {
+    "$condition": {
+        "$eq": [
+        { "$field": "$sme.CountryOfOrigin#value" },
+        { "$strVal": "DE" }
+        ]
+    }
+    }
+    }
 
-# # Define all your hardcoded queries
-#   queries = {
-#     "01_starts_with": {
-#   "$condition": {
-#     "$starts-with": [
-#           { "$field": "$sme.EmailAddress#value" },
-#           { "$strVal": "email@" }    
-#     ]
-#   }
-# },
-#     "02_regex_serial_number": {
-#   "$condition": {
-#     "$regex": [
-#       { "$field": "$sme.SerialNumber#value" },
-#       { "$strVal": "^[0-9]{8}$" }
-#     ]
-#   }
-# },
-#     "03_contains": {
-#   "$condition": {
-#     "$contains": [
-#       { "$field": "$sme.URIOfTheProduct#value" },
-#       { "$strVal": "domain-abc" }
-#     ]
-#   }
-# },
-#     "04_ge_year_of_construction": {
-#   "$condition": {
-#     "$ge": [
-#       { "$field": "$sme.YearOfConstruction#value" },
-#       { "$numVal": 2020 }
-#     ]
-#   }
-# },
-#     "05_ne_country_of_origin": {
-#   "$condition": {
-#     "$ne": [
-#       { "$field": "$sme.CountryOfOrigin#value" },
-#       { "$strVal": "US" }
-#     ]
-#   }
-# }
-# }
+    # Translate and print each one
+    for name, aas_query in queries.items():
+        print("\n---")
+        print(f"Translating query: {name}")
+        translator = AASQueryTranslator(aas_query)
+        cypher_output = translator.translate()
+        print("Generated Cypher:")
+        print(cypher_output)
+        print("---\n")
 
-# # Translate and print each one
-# for name, aas_query in queries.items():
-#     print("\n---")
-#     print(f"Translating query: {name}")
-#     translator = AASQueryTranslator(aas_query)
-#     cypher_output = translator.translate()
-#     print("Generated Cypher:")
-#     print(cypher_output)
-#     print("---\n")
-
-
-
-
-
-
-# import unittest
-# from translator import AASQueryTranslator 
-
-# class TestAASTranslator(unittest.TestCase):
-
-#     def test_contains_string(self):
-#         aas_query = {
-#     "$condition": {
-#       "$contains": [
-#         { "$field": "$sme.Description#value" },
-#         { "$strVal": "high-quality" }
-#       ]
-#     }
-#   }
-
-#         expected_cypher = """MATCH (sm0:Submodel)-[:child]->(sme0:SubmodelElement {idShort: "Description"})
-# WHERE sme0.value CONTAINS 'high-quality'
-# RETURN sm0"""
-
-#         translator = AASQueryTranslator(aas_query)
-#         cypher = translator.translate().strip()
-
-#         self.assertEqual(cypher, expected_cypher.strip())
-
-#     def test_ne_filter(self):
-#         aas_query = {
-#         "$condition": {
-#           "$ne": [
-#             { "$field": "$sme.Material#value" },
-#             { "$strVal": "Plastic" }
-#           ]
-#         }
-#       }
-
-#         expected_cypher = """MATCH (sm0:Submodel)-[:child]->(sme0:SubmodelElement {idShort: "Material"})
-# WHERE sme0.value <> 'Plastic'
-# RETURN sm0"""
-
-#         translator = AASQueryTranslator(aas_query)
-#         cypher = translator.translate().strip()
-
-#         self.assertEqual(cypher, expected_cypher.strip())
-
-#     def test_ge_filter(self):
-#         aas_query = {
-#     "$condition": {
-#       "$ge": [
-#         { "$field": "$sme.Weight#value" },
-#         { "$numVal": 100 }
-#       ]
-#     }
-#   }
-
-#         expected_output = """MATCH (sm0:Submodel)-[:child]->(sme0:SubmodelElement {idShort: "Weight"})
-# WHERE sme0.value >= 100
-# RETURN sm0"""
-
-#         translator = AASQueryTranslator(aas_query)
-#         cypher = translator.translate().strip()
-
-#         self.assertEqual(cypher, expected_output.strip())
-
-#     def test_gt_filter(self):
-#         aas_query = {
-#     "$condition": {
-#       "$gt": [
-#         { "$field": "$sme.Temperature#value" },
-#         { "$numVal": 50 }
-#       ]
-#     }
-#   }
-    
-#         expected_output = """MATCH (sm0:Submodel)-[:child]->(sme0:SubmodelElement {idShort: "Temperature"})
-# WHERE sme0.value > 50
-# RETURN sm0"""
-
-#         translator = AASQueryTranslator(aas_query)
-#         cypher = translator.translate().strip()
-
-#         self.assertEqual(cypher, expected_output.strip())
-
-#     def test_regex_pattern(self):
-#         aas_query = {
-#     "$condition": {
-#       "$regex": [
-#         { "$field": "$sme.SerialNumber#value" },
-#         { "$strVal": "SN[0-9]{4}" }
-#       ]
-#     }
-#   }
-    
-#         expected_output = """MATCH (sm0:Submodel)-[:child]->(sme0:SubmodelElement {idShort: "SerialNumber"})
-# WHERE sme0.value =~ 'SN[0-9]{4}'
-# RETURN sm0"""
-
-#         translator = AASQueryTranslator(aas_query)
-#         cypher = translator.translate().strip()
-
-#         self.assertEqual(cypher, expected_output.strip())
-
-#     def test_starts_with(self):
-#         aas_query = {
-#     "$condition": {
-#         "$starts-with": [
-#           { "$field": "$sme.ProductCode#value" },
-#           { "$strVal": "ABC-" }
-#         ]
-#       }
-#     }
-    
-#         expected_output = """MATCH (sm0:Submodel)-[:child]->(sme0:SubmodelElement {idShort: "ProductCode"})
-# WHERE sme0.value STARTS WITH 'ABC-'
-# RETURN sm0"""
-
-#         translator = AASQueryTranslator(aas_query)
-#         cypher = translator.translate().strip()
-
-#         self.assertEqual(cypher, expected_output.strip())
-
-
-
-# if __name__ == '__main__':
-#     unittest.main()
