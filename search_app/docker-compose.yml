@@ -1,0 +1,45 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.4
+    container_name: elasticsearch
+    env_file:
+      - .env
+    environment:
+      - discovery.type=single-node
+      - xpack.security.http.ssl.enabled=false
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xmx2g
+      - ELASTICSEARCH_USERNAME=$ELASTIC_USER
+      - ELASTICSEARCH_PASSWORD=$ELASTIC_PASSWORD
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: curl -s http://elasticsearch:9200 || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  search-app:
+    build: .
+    env_file:
+      - .env
+    container_name: search-app
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_APP=searchApp.py
+      - FLASK_ENV=development
+    command: flask run --host=0.0.0.0
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+volumes:
+  es_data:

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Elasticsearch Search</title>
+    <style>
+        .search-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .small-input {
+            width: 120px;
+            height: 30px;
+            font-size: 14px;
+        }
+
+        button {
+            height: 38px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #results {
+            margin-top: 20px;
+        }
+
+        #fieldInput {
+            display: none;
+        }
+    </style>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const selector = document.getElementById("optionSelecter");
+            const freeInput = document.getElementById("fieldInput");
+
+            selector.addEventListener("change", () => {
+                if (selector.value === "free") {
+                    freeInput.style.display = "block";
+                } else {
+                    freeInput.style.display = "none";
+                }
+            });
+        });
+
+        async function performSearch() {
+            const mainQuery = document.getElementById("searchInput").value;
+            const secondaryQuery = document.getElementById("optionSelecter").value;
+            const searchSize = document.getElementById("sizeInput").value;
+            const field = document.getElementById("fieldInput").value;
+            const category = document.getElementById("category").value;
+            const filter = document.getElementById("filter").value;
+
+            if (!mainQuery || (secondaryQuery === "--Please choose an option--")) {
+                alert("Please fill out all fields.");
+                return;
+            }
+
+            const payload = {
+                main_query: mainQuery,
+                secondary_query: secondaryQuery,
+                searchSize: searchSize,
+                freeField: field,
+                category: category,
+                filter: filter
+            };
+
+            const response = await fetch("/search", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const resultDiv = document.getElementById("results");
+            resultDiv.innerHTML = "";
+
+            if (response.ok) {
+                const numberResults = document.getElementById("numberResults");
+                const data = await response.json();
+                const totalHits = data.length;
+                numberResults.textContent = `Total Hits: ${totalHits}`;
+                data.forEach(item => {
+                    const entry = document.createElement("div");
+                    entry.textContent = JSON.stringify(item._source, null, 2);
+                    resultDiv.appendChild(entry);
+                });
+            } else {
+                const error = await response.json();
+                resultDiv.innerHTML = `<p style="color: red;">Error: ${error.error}</p>`;
+            }
+        }
+    </script>
+</head>
+<body>
+<h1>Elasticsearch Search</h1>
+<div class="search-container">
+    <label for="optionSelecter"></label><select id="optionSelecter">
+    <option value="--Please choose an option--">--Please choose an option--</option>
+    <option value="semanticId">SemanticID</option>
+    <option value="id">Identifier</option>
+    <option value="idShort">IDShort</option>
+    <option value="description">Description</option>
+    <option value="values">Specific Values of SubmodelElements</option>
+    <option value="free">Search for a specific Value</option>
+</select>
+    <label for="fieldInput"></label><input type="text" id="fieldInput" class="small-input" placeholder="Enter a field"/>
+    <label for="searchInput"></label><input type="text" id="searchInput" class="small-input"
+                                            placeholder="Enter search query"/>
+    <label for="sizeInput"></label><input type="number" id="sizeInput" class="small-input" placeholder="Size" min="1"
+                                          max="10000"/>
+    <button onclick="performSearch()">Search</button>
+    <label for="category">Filter</label><input type="text" id="category" class="small-input" placeholder="Category"/>
+    <label for="filter"></label><input type="text" id="filter" class="small-input" placeholder="Filter"/>
+</div>
+<label id="numberResults"></label>
+<div id="results"></div>
+</body>
+</html>
