@@ -15,9 +15,19 @@ These clauses are then executed in the Neo4j database.
 2. If ``Referable`` contains other ``Referable`` -> ``Relationship``
 3. ``Reference`` is a ``Relationship``
 
+### Model dicts in Neo4J as lists
+In Neo4J it is not possible to save dicts or list of dicts in a node property.
+By creating separate nodes for each dict and connecting them with relationships, we complicate the model and the Neo4J writing process will be longer.
+That's why we decided to model lists of dicts as multiple lists where each list represent values saved under one key.
+
+
 ## Limitation or Not implemented
 - Only basic Deserialization from Neo4j is implemented
-- AAS Query Language Mapping to Cypher
+- AAS Query Language Mapping to our Cypher Schema is not implemented yet
+Todo:
+- Resolve ModelReferences 
+- Resolve ExternalReferences for EClass
+- Model ECLASS as Nodes with their classifications
 
 # Getting started
 
