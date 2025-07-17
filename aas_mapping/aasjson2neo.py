@@ -64,7 +64,7 @@ class AASNeo4JClient:
         """Optimize the Neo4j database by creating indexes for the Identifiable and Referable nodes."""
         for clause in self.DEFAULT_OPTIMIZATION_CLAUSES:
             try:
-                self.execute_clause(clause)
+                self.execute_clause(clause, single=True)
             except neo4j.exceptions.ClientError as e:
                 if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
                     logger.info(f"Index already exists: {clause}")
@@ -72,9 +72,12 @@ class AASNeo4JClient:
     def execute_clause(self, clause: CypherClause, single: bool = False):
         """Execute the generated Cypher clauses in the Neo4j database. After execution, the clauses are cleared."""
         with self.driver.session() as session:
-            result = session.run(clause).single() if single else session.run(clause)
-            for record in result:
-                logger.info(record)
+            if single:
+                result = session.run(clause).single() if single else session.run(clause)
+            else:
+                result = session.run(clause)
+                if result:
+                    result = [record for record in result]
             return result
 
     def read_file_and_create_clause(self, file_path: str) -> CypherClause:
@@ -116,15 +119,41 @@ class AASNeo4JClient:
         clauses = self._add_referable_clause(obj)
         return self.execute_clause(clauses)
 
-    def remove_referable(self, parent_id: str, id_short_path: str):
+    def identifiable_exists(self, identifier: str) -> bool:
+        """Check if an Identifiable node with the given ID exists in the Neo4j database."""
+        clause = f"MATCH (n:Identifiable {{id: '{identifier}'}} ) RETURN count(n)>0"
+        result = self.execute_clause(clause, single=True)
+        return result[0]
+
+    def remove_referable(self, parent_id: str, id_short_path: str = None):
         clauses = self._remove_referable_clause(parent_id, id_short_path)
         return self.execute_clause(clauses)
 
-    def get_referable(self, parent_id: str, id_short_path: str) -> Dict:
+    def remove_identifiable(self, identifier: str):
+        return self.remove_referable(identifier)
+
+    def get_referable(self, parent_id: str, id_short_path: str = None) -> Dict:
         clauses = self._get_subgraph_of_referable_clause(parent_id, id_short_path)
         result = self.execute_clause(clauses, single=True)
-        subgraph_json = json.loads(result["json"]) if result else {}
+        if result is None:
+            raise KeyError(f"No Referable found with: id={parent_id}, id_short_path={id_short_path}")
+        subgraph_json = json.loads(result["json"])
         return self._convert_referable_subgraph_to_dict(subgraph_json)
+
+    def get_identifiable(self, identifier: str) -> Dict:
+        return self.get_referable(identifier)
+
+    def count_nodes_with_label(self, label: str) -> int:
+        """Count the number of nodes with a specific label."""
+        clause = f"MATCH (n:{label}) RETURN COUNT(n) AS count"
+        result = self.execute_clause(clause, single=True)
+        return result["count"] if result else 0
+
+    def count_referables(self) -> int:
+        return self.count_nodes_with_label("Referable")
+
+    def count_identifiables(self) -> int:
+        return self.count_nodes_with_label("Identifiable")
 
     @staticmethod
     def itemize_id_short_path(id_short_path: str) -> List[str]:
@@ -155,6 +184,8 @@ class AASNeo4JClient:
             return ["Qualifier", obj["kind"]]
         elif "language" in obj and "text" in obj:
             return ["LangString"]
+        elif "assetKind" in obj:
+            return ["AssetInformation"]
         else:
             return ["Unknown"]
 
@@ -343,7 +374,8 @@ class AASNeo4JClient:
             "CALL apoc.path.subgraphAll(the_node, {relationshipFilter: '>'}) YIELD nodes "
             "WHERE NOT EXISTS { MATCH (node)-[:references]-() } "
             "UNWIND nodes AS node "
-            "DETACH DELETE node;"
+            "DETACH DELETE node "
+            "RETURN count(node) AS deletedNodes; "
         )
         return clauses + delete_clause
 

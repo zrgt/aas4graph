@@ -8,6 +8,9 @@ This project is a proof of concept for the mapping of the Asset Administration S
 It reads an AAS and generates a Cypher clauses to create the graph in Neo4j.
 These clauses are then executed in the Neo4j database.
 
+
+We have developed Classes to map the Cypher MATCH clause and its variables
+
 ## AAS - Neo4j Mapping
 
 1. ``Referable`` = ``Node``
