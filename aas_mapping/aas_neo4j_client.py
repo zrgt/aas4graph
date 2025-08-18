@@ -160,21 +160,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     def _merge_relationships(self, target: Dict[str, List], source: Dict[str, List]):
         """Merge relationships from source into target."""
         for key, value in source.items():
-            if key in target:
-                target[key].extend(value)
-            else:
-                target[key] = value.copy()
-
-    def _cleanup_uids(self, internal_ids: List[int]):
-        """Remove `uid` property only from the nodes created by this process."""
-        delete_query = """
-        UNWIND $ids AS id
-        MATCH (n)
-        WHERE id(n) = id
-        REMOVE n.uid
-        """
-        with self.driver.session() as session:
-            session.run(delete_query, ids=internal_ids)
+            target.setdefault(key, []).extend(value)
 
     def _create_nodes(self, session: Session, grouped_nodes: Dict[Tuple[str], List[Dict]]) -> Dict[int, int]:
         """Create nodes in Neo4j and return uid to internal_id mapping."""
@@ -205,7 +191,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         return uid_to_internal_id
 
     def _create_relationships(self, session: Session, relationships: Dict[str, List],
-                              uid_to_internal_id: Dict[int, int], db_batch_size: int = 1000):
+                              uid_to_internal_id: Dict[int, int], db_batch_size: int = 10000):
         """Create relationships in Neo4j."""
         created_rels = 0
         for rel_type, rel_list in relationships.items():
