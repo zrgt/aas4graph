@@ -3,11 +3,12 @@ import os
 import time
 from dataclasses import dataclass
 from os.path import isfile, join
-from typing import Dict, List, Tuple, Optional, Set, Any
+from typing import Dict, List, Tuple, Optional, Set, Any, Iterable
 import neo4j
 import json
 
-from neo4j import Driver
+from neo4j import Driver, Session
+from neo4j.exceptions import TransientError, ClientError
 
 from aas_mapping import aas_utils
 from aas_mapping.aas_utils import IDENTIFIABLE_KEYS
@@ -58,30 +59,27 @@ class BaseNeo4JClient:
         """Execute the generated Cypher clauses in the Neo4j database. After execution, the clauses are cleared."""
         with self.driver.session() as session:
             if single:
-                result = session.run(clause).single() if single else session.run(clause)
+                result = session.run(clause).single()
             else:
                 result = session.run(clause)
                 if result:
                     result = [record for record in result]
             return result
 
-    def _remove_all(self, batch_size: int = 10000):
-        """Remove all nodes and relationships from the Neo4j database."""
+    def _remove_all(self, batch_size = 10000):
+        """
+        Remove all nodes and relationships from the Neo4j database in batches.
+        It prevents memory errors on large databases.
+        """
         with self.driver.session() as session:
             while True:
-                # Query to find and detach/delete a limited number of nodes
-                # We use a subquery to ensure the count is done correctly before the delete
-                # and to handle the large number of nodes more efficiently.
-                result = session.run("""
+                result = session.run(f"""
                     MATCH (n)
-                    WITH n LIMIT $batch_size
+                    WITH n LIMIT {batch_size}
                     DETACH DELETE n
                     RETURN count(n) AS nodes_deleted
-                """, batch_size=batch_size)
-
+                """)
                 nodes_deleted = result.single()["nodes_deleted"]
-
-                # Log the progress
                 logger.info(f"Deleted {nodes_deleted} nodes.")
 
                 # If the number of nodes deleted is less than the batch size,
@@ -99,7 +97,8 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     DEFAULT_OPTIMIZATION_CLAUSES = [
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
-        "CREATE INDEX FOR (r:Referable) ON (r.index);",  # For Referables in SubmodelElementLists
+        "CREATE INDEX FOR (r:Referable) ON (r.index);",
+        "CREATE INDEX FOR (n) ON (n.uid);",  # Add a temporary UID index for faster lookups
     ]
 
     # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
@@ -117,7 +116,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         self.uid_counter = 0
 
     def optimize_database(self):
-        """Optimize the Neo4j database by creating indexes for the Identifiable and Referable nodes."""
+        """Optimize the Neo4j database by creating all necessary indexes."""
         for clause in self.DEFAULT_OPTIMIZATION_CLAUSES:
             try:
                 self.execute_clause(clause, single=True)
@@ -125,7 +124,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                 if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
                     logger.info(f"Index already exists: {clause}")
 
-    def _get_props_to_model_as_multiple_lists(self, node_labels: List[str]) -> List[str]:
+    def _get_props_to_model_as_multiple_lists(self, node_labels: Iterable[str]) -> List[str]:
         """
         Get the node properties that are list of dictionaries and should be converted to property lists.
         """
@@ -137,12 +136,10 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         return property_list_of_dicts_to_model_as_multiple_lists
 
     def _gen_unique_node_name(self) -> int:
-        """Generate unique ID for nodes."""
         self.uid_counter += 1
         return self.uid_counter
 
     def _group_nodes_by_label(self, nodes: List[Dict]) -> Dict[Tuple[str], List[Dict]]:
-        """Group nodes by their labels."""
         grouped = {}
         for node in nodes:
             labels = tuple(sorted(node.pop('labels')))
@@ -179,7 +176,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         with self.driver.session() as session:
             session.run(delete_query, ids=internal_ids)
 
-    def _create_nodes(self, grouped_nodes: Dict[Tuple[str], List[Dict]]) -> Dict[int, int]:
+    def _create_nodes(self, session: Session, grouped_nodes: Dict[Tuple[str], List[Dict]]) -> Dict[int, int]:
         """Create nodes in Neo4j and return uid to internal_id mapping."""
         create_nodes_query = """
         UNWIND keys($data) AS labelString
@@ -200,29 +197,22 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         }
 
         uid_to_internal_id = {}
-
-        with self.driver.session() as session:
-            # Create indexes for better performance
-            for labels in grouped_nodes.keys():
-                for label in labels:
-                    session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:{label}) ON (n.uid)")
-
-            # Create nodes
-            result = session.run(create_nodes_query, data=data_for_query)
-            for record in result:
-                uid_to_internal_id[record['uid']] = record['internal_id']
+        # Create nodes
+        result = session.run(create_nodes_query, data=data_for_query)
+        for record in result:
+            uid_to_internal_id[record['uid']] = record['internal_id']
 
         return uid_to_internal_id
 
-    def _create_relationships(self, relationships: Dict[str, List], uid_to_internal_id: Dict[int, int]):
+    def _create_relationships(self, session: Session, relationships: Dict[str, List],
+                              uid_to_internal_id: Dict[int, int], db_batch_size: int = 1000):
         """Create relationships in Neo4j."""
-        with self.driver.session() as session:
-            total_created = 0
-
-            for rel_type, rel_list in relationships.items():
-                # Prepare relationship data
+        created_rels = 0
+        for rel_type, rel_list in relationships.items():
+            for i in range(0, len(rel_list), db_batch_size):
+                batch_rels = rel_list[i:i + db_batch_size]
                 prepared_rels = []
-                for rel in rel_list:
+                for rel in batch_rels:
                     try:
                         prepared_rels.append({
                             'from_id': uid_to_internal_id[rel['from_uid']],
@@ -243,15 +233,16 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                     RETURN count(*) as created
                     """
 
-                    result = session.run(create_rels_query, relationships=prepared_rels)
-                    created = result.single()['created']
-                    total_created += created
-                    print(f"Created {created} relationships of type '{rel_type}'")
+                    try:
+                        result = session.run(create_rels_query, relationships=prepared_rels)
+                        created = result.single()['created']
+                        created_rels += created
+                    except TransientError as e:
+                        logger.error(f"Transient error during relationship creation batch: {e}")
 
-            return total_created
+        return created_rels
 
-    def _process_dict(self, obj: Dict, node_properties: Optional[Dict[str, any]] = None) -> Tuple[
-        List[Dict], Dict[str, List]]:
+    def _process_dict(self, obj: Dict, node_properties: Optional[Dict[str, any]] = None) -> Tuple[List[Dict], Dict[str, List]]:
         nodes = []
         relationships = {}
         node_properties = node_properties or {}
@@ -340,92 +331,109 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
     def _upload_nodes_and_relationships(self, nodes: List[Dict], relationships: Dict[str, List],
                                         stats: AASUploadStats = None,
-                                        exist_uid_to_internal_id: Optional[Dict[int, int]] = None
-                                        ) -> AASUploadStats:
-        """Upload nodes and relationships to Neo4j."""
+                                        exist_uid_to_internal_id: Optional[Dict[int, int]] = None,
+                                        db_batch_size: int = 1000) -> AASUploadStats:
+        """Upload nodes and relationships to Neo4j in a single transaction."""
         if stats is None:
             stats = AASUploadStats()
 
         # Group nodes and filter relationships for this batch
         grouped_nodes = self._group_nodes_by_label(nodes)
 
-        # Create nodes in Neo4j
-        node_start_time = time.time()
 
-        uid_to_internal_id = self._create_nodes(grouped_nodes)
-        if exist_uid_to_internal_id:
-            # Merge existing UID to internal ID mapping with newly created nodes
-            uid_to_internal_id.update(exist_uid_to_internal_id)
+        with self.driver.session() as session:
+            # 1. Create Nodes in Batches
+            node_start_time = time.time()
+            uid_to_internal_id = self._create_nodes(session, grouped_nodes)
+            if exist_uid_to_internal_id:
+                # Merge existing UID to internal ID mapping with newly created nodes
+                uid_to_internal_id.update(exist_uid_to_internal_id)
 
-        node_count = sum(len(nodes) for nodes in grouped_nodes.values())
-        node_creation_time = time.time() - node_start_time
-        stats.total_node_creation_time += node_creation_time
-        stats.total_nodes_created += node_count
-        logger.info(f"Created {node_count} nodes in {node_creation_time:.2f} seconds")
+            node_creation_time = time.time() - node_start_time
+            stats.total_node_creation_time += node_creation_time
+            node_count = sum(len(nodes) for nodes in grouped_nodes.values())
+            stats.total_nodes_created += node_count
+            logger.info(f"Created {node_count} nodes in {node_creation_time:.2f} seconds")
 
-        # Create relationships in Neo4j
-        rel_start_time = time.time()
-        relationship_count = self._create_relationships(relationships, uid_to_internal_id)
-        relationship_creation_time = time.time() - rel_start_time
-        stats.total_relationship_creation_time += relationship_creation_time
-        stats.total_relationships_created += relationship_count
-        logger.info(f"Created {relationship_count} relationships in {relationship_creation_time:.2f} seconds")
+            # 2. Create Relationships in Batches
+            rel_start_time = time.time()
+            relationship_count = self._create_relationships(session, relationships, uid_to_internal_id, db_batch_size)
+            relationship_creation_time = time.time() - rel_start_time
+            stats.total_relationship_creation_time += relationship_creation_time
+            stats.total_relationships_created += relationship_count
+            logger.info(f"Created {relationship_count} relationships in {relationship_creation_time:.2f} seconds")
 
-        # Memory cleanup
-        self._cleanup_uids(list(uid_to_internal_id.values()))
+            # 3. Cleanup UIDs in Batches
+            self._cleanup_uids_in_session(session, list(uid_to_internal_id.values()), db_batch_size)
+
         del grouped_nodes, uid_to_internal_id
 
         return stats
 
-    def upload_all_aas_json_from_dir(self, directory: str, batch_size: int = 50) -> Dict[str, int]:
+    def _cleanup_uids_in_session(self, session: Session, internal_ids: List[int], batch_size: int):
+        """Removes `uid` property from nodes in batches within an existing session."""
+        delete_query = """
+        UNWIND $ids AS id
+        MATCH (n)
+        WHERE id(n) = id
+        REMOVE n.uid
+        """
+        for i in range(0, len(internal_ids), batch_size):
+            batch_ids = internal_ids[i:i + batch_size]
+            try:
+                session.run(delete_query, ids=batch_ids)
+            except ClientError as e:
+                logging.warning(f"Error during UID cleanup for batch: {e}")
+
+    def upload_all_aas_json_from_dir(self, directory: str, file_batch_size: int = 50,
+                                     db_batch_size: int = 1000) -> AASUploadStats:
         """Upload JSON files from directory into Neo4j using batch processing."""
         stats = AASUploadStats()
-
-        # Get all JSON files
         json_files = [f for f in os.listdir(directory) if isfile(join(directory, f)) and f.endswith('.json')]
         stats.total_files = len(json_files)
-        stats.total_batches = (stats.total_files + batch_size - 1) // batch_size  # Ceiling division
+        stats.total_batches = (stats.total_files + file_batch_size - 1) // file_batch_size
 
         logger.info(f"Found {stats.total_files} JSON files in directory '{directory}'")
-        logger.info(f"Batch size: {stats.total_batches} batches of {batch_size} files each")
+        logger.info(f"File batch size: {stats.total_batches} batches of {file_batch_size} files each")
+        logger.info(f"Database transaction batch size: {db_batch_size}")
 
         # Process files in batches
         for batch_num in range(stats.total_batches):
-            start_idx = batch_num * batch_size
-            end_idx = min(start_idx + batch_size, stats.total_files)
-            current_batch = json_files[start_idx:end_idx]
+            start_idx = batch_num * file_batch_size
+            end_idx = min(start_idx + file_batch_size, stats.total_files)
+            current_file_batch = json_files[start_idx:end_idx]
 
             logger.info(f"\n--- Processing Batch {batch_num + 1}/{stats.total_batches} ---")
             logger.info(f"Files {start_idx + 1}-{end_idx} of {stats.total_files}")
 
             # Process current batch
             batch_start_time = time.time()
-            batch_nodes, batch_relationships = self._process_aas_json_file_batch(directory, current_batch)
+            batch_nodes, batch_relationships = self._process_aas_json_file_batch(directory, current_file_batch)
+
             processing_time = time.time() - batch_start_time
             stats.total_processing_time += processing_time
-            logger.info(f"Processed {len(current_batch)} files in {processing_time:.2f} seconds")
+            logger.info(f"Processed {len(current_file_batch)} files in {processing_time:.2f} seconds")
 
             if not batch_nodes:
                 logger.info("No nodes to create in this batch, skipping...")
                 continue
 
-            self._upload_nodes_and_relationships(batch_nodes, batch_relationships, stats)
+            self._upload_nodes_and_relationships(batch_nodes, batch_relationships, stats, db_batch_size=db_batch_size)
+
             batch_total_time = time.time() - batch_start_time
             logger.info(f"Batch {batch_num + 1} completed in {batch_total_time:.2f} seconds")
 
         stats.finish()
         return stats
 
-    def upload_aas_json_file(self, file_path: str):
-        """Upload a single JSON file to the Neo4j database."""
+    def upload_aas_json_file(self, file_path: str, db_batch_size: int = 1000):
         nodes, relationships = self._process_aas_json_file(file_path)
-        stats = self._upload_nodes_and_relationships(nodes, relationships)
+        stats = self._upload_nodes_and_relationships(nodes, relationships, db_batch_size=db_batch_size)
         stats.finish()
 
-    def upload_aas_json(self, aas_json_data: Dict[str, Any]):
-        """Upload AAS JSON data directly to the Neo4j database."""
+    def upload_aas_json(self, aas_json_data: Dict[str, Any], db_batch_size: int = 1000):
         nodes, relationships = self._process_aas_json_data(aas_json_data)
-        stats = self._upload_nodes_and_relationships(nodes, relationships)
+        stats = self._upload_nodes_and_relationships(nodes, relationships, db_batch_size=db_batch_size)
         stats.finish()
 
 
@@ -611,14 +619,14 @@ class AASNeo4JClient(AASUploaderInNeo4J):
 
 
 def main():
-    def optimized_upload_all_submodels(submodels_folder="examples/aas/Festo_AAS_JSON/"):
+    def optimized_upload_all_submodels(submodels_folder="examples/aas/test_dataset/"):
         # Use the OptimizedAASNeo4JClient for batch processing
         optimized_client = AASUploaderInNeo4J(uri="bolt://localhost:7687", user="neo4j", password="password")
         optimized_client._remove_all()
         # set timer
         import time
         start_time = time.time()
-        result = optimized_client.upload_all_aas_json_from_dir(submodels_folder, batch_size=100)
+        result = optimized_client.upload_all_aas_json_from_dir(submodels_folder, file_batch_size=100)
         end_time = time.time()
         print(f"Execution time: {end_time - start_time} seconds")
 
