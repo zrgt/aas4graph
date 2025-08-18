@@ -65,10 +65,29 @@ class BaseNeo4JClient:
                     result = [record for record in result]
             return result
 
-    def _remove_all(self):
+    def _remove_all(self, batch_size: int = 10000):
         """Remove all nodes and relationships from the Neo4j database."""
         with self.driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
+            while True:
+                # Query to find and detach/delete a limited number of nodes
+                # We use a subquery to ensure the count is done correctly before the delete
+                # and to handle the large number of nodes more efficiently.
+                result = session.run("""
+                    MATCH (n)
+                    WITH n LIMIT $batch_size
+                    DETACH DELETE n
+                    RETURN count(n) AS nodes_deleted
+                """, batch_size=batch_size)
+
+                nodes_deleted = result.single()["nodes_deleted"]
+
+                # Log the progress
+                logger.info(f"Deleted {nodes_deleted} nodes.")
+
+                # If the number of nodes deleted is less than the batch size,
+                # it means we have reached the end of the database.
+                if nodes_deleted < batch_size:
+                    break
 
     def save_clauses_to_file(file_name: str, clauses: CypherClause):
         """Save the generated Cypher clauses to a file."""
@@ -122,11 +141,11 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         self.uid_counter += 1
         return self.uid_counter
 
-    def _group_nodes_by_label(self, nodes: List[Dict]) -> Dict[str, List[Dict]]:
+    def _group_nodes_by_label(self, nodes: List[Dict]) -> Dict[Tuple[str], List[Dict]]:
         """Group nodes by their labels."""
         grouped = {}
         for node in nodes:
-            labels = node.pop('labels')
+            labels = tuple(sorted(node.pop('labels')))
             if labels not in grouped:
                 grouped[labels] = []
             grouped[labels].append(node)
@@ -136,7 +155,6 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         """Add a relationship to the relationships dictionary."""
         if rel_type not in relationships:
             relationships[rel_type] = []
-
         relationships[rel_type].append({
             'from_uid': from_uid,
             'to_uid': to_uid,
@@ -604,6 +622,7 @@ def main():
         end_time = time.time()
         print(f"Execution time: {end_time - start_time} seconds")
 
+    logger.setLevel(logging.INFO)
     optimized_upload_all_submodels()
 
 
