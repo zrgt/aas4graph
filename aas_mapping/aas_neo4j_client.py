@@ -98,7 +98,6 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
         "CREATE INDEX FOR (r:Referable) ON (r.index);",
-        "CREATE INDEX FOR (n) ON (n.uid);",  # Add a temporary UID index for faster lookups
     ]
 
     # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
@@ -123,6 +122,8 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
             except neo4j.exceptions.ClientError as e:
                 if e.code == "Neo.ClientError.Schema.EquivalentSchemaRuleAlreadyExists":
                     logger.info(f"Index already exists: {clause}")
+                else:
+                    logger.warning(f"Failed to create index: {clause}, Error: {e}")
 
     def _get_props_to_model_as_multiple_lists(self, node_labels: Iterable[str]) -> List[str]:
         """
@@ -165,15 +166,15 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     def _create_nodes(self, session: Session, grouped_nodes: Dict[Tuple[str], List[Dict]]) -> Dict[int, int]:
         """Create nodes in Neo4j and return uid to internal_id mapping."""
         create_nodes_query = """
-        UNWIND keys($data) AS labelString
-        WITH split(labelString, ",") AS labels, $data[labelString] AS propertiesList
-        UNWIND propertiesList AS properties
-        CALL {
-            WITH labels, properties
-            CALL apoc.create.node(labels, properties) YIELD node
-            RETURN id(node) AS internal_id, properties.uid AS uid
-        }
-        RETURN internal_id, uid
+        UNWIND keys($data) AS labelsString
+        
+        WITH split(labelsString, ",") AS labels, $data[labelsString] AS nodesProperties
+        
+        UNWIND nodesProperties AS nodeProperties
+        CREATE (n:$(labels))
+        SET n = nodeProperties
+        
+        RETURN elementId(n) AS internal_id, nodeProperties.uid AS uid
         """
 
         # Convert tuple keys to strings for Neo4j compatibility
@@ -181,6 +182,10 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
             ",".join(label_tuple): node_list
             for label_tuple, node_list in grouped_nodes.items()
         }
+
+        for labels in grouped_nodes.keys():
+            for label in labels:
+                session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:{label}) ON (n.uid)")
 
         uid_to_internal_id = {}
         # Create nodes
@@ -213,8 +218,8 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                     # Create relationships in batch
                     create_rels_query = f"""
                     UNWIND $relationships AS rel
-                    MATCH (from_node) WHERE id(from_node) = rel.from_id
-                    MATCH (to_node) WHERE id(to_node) = rel.to_id
+                    MATCH (from_node) WHERE elementId(from_node) = rel.from_id
+                    MATCH (to_node) WHERE elementId(to_node) = rel.to_id
                     CREATE (from_node)-[:{rel_type}]->(to_node)
                     RETURN count(*) as created
                     """
@@ -267,7 +272,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
             elif isinstance(value, list):
                 for i, item in enumerate(value, start=0):
                     if isinstance(item, dict):
-                        child_nodes, child_rels = self._process_dict(item, node_properties={"index": i})
+                        child_nodes, child_rels = self._process_dict(item, node_properties={"se_list_index": i})
                         nodes.extend(child_nodes)
                         self._merge_relationships(relationships, child_rels)
 
@@ -361,7 +366,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         delete_query = """
         UNWIND $ids AS id
         MATCH (n)
-        WHERE id(n) = id
+        WHERE elementId(n) = id
         REMOVE n.uid
         """
         for i in range(0, len(internal_ids), batch_size):
@@ -372,7 +377,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                 logging.warning(f"Error during UID cleanup for batch: {e}")
 
     def upload_all_aas_json_from_dir(self, directory: str, file_batch_size: int = 50,
-                                     db_batch_size: int = 1000) -> AASUploadStats:
+                                     db_batch_size: int = 10000) -> AASUploadStats:
         """Upload JSON files from directory into Neo4j using batch processing."""
         stats = AASUploadStats()
         json_files = [f for f in os.listdir(directory) if isfile(join(directory, f)) and f.endswith('.json')]
@@ -543,7 +548,7 @@ class AASNeo4JClient(AASUploaderInNeo4J):
     def _convert_referable_subgraph_to_dict(self, subgraph: Dict) -> Dict:
         """Take a Neo4J subgraph of a Referable and convert it to a dictionary."""
 
-        def convert_node(node: Dict) -> Dict:
+        def get_node_properties(node: Dict) -> Dict:
             return {key: value for key, value in node['properties'].items()}
 
         def create_list_of_dicts(*lists: List[List[any]], keys: List[str]) -> List[Dict]:
@@ -560,24 +565,24 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                     if rel_type in SPECIFIC_RELATIONSHIPS:
                         continue
                     related_node = next(n for n in subgraph['nodes'] if n['id'] == rel['end']['id'])
-                    related_node_dict = convert_node(related_node)
+                    related_node_properties = get_node_properties(related_node)
 
-                    if "index" in related_node['properties']:
-                        node_dict.setdefault(rel_type, []).append(related_node_dict)
+                    if "se_list_index" in related_node['properties']:
+                        node_dict.setdefault(rel_type, []).append(related_node_properties)
                     else:
-                        node_dict[rel_type] = related_node_dict
+                        node_dict[rel_type] = related_node_properties
 
                     # Recursively process the related node if it has outgoing relationships
-                    add_relationships(related_node, related_node_dict,
+                    add_relationships(related_node, related_node_properties,
                                       [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
 
                     # Sort list entries by index in the dictionary and remove the index key
                     for key, value in node_dict.items():
                         if value and isinstance(value, list) and isinstance(value[0], dict) and value[0].get(
-                                'index') is not None:
-                            node_dict[key] = sorted(value, key=lambda x: x.get('index', 0))
+                                'se_list_index') is not None:
+                            node_dict[key] = sorted(value, key=lambda x: x.get('se_list_index', 0))
                             for item in node_dict[key]:
-                                item.pop('index', None)
+                                item.pop('se_list_index', None)
 
                     # Handle specific keys for certain node types
                     related_node_labels = related_node['labels']
@@ -587,18 +592,18 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                             original_prop_prefix = original_prop + "_"
 
                             # Find all keys that belong to this original_prop
-                            part_attr_keys = [key for key in related_node_dict if key.startswith(original_prop_prefix)]
+                            part_attr_keys = [key for key in related_node_properties if key.startswith(original_prop_prefix)]
 
                             if not part_attr_keys:
                                 continue
 
                             # Extract lists and strip the prefix from keys
-                            lists = [related_node_dict.pop(key) for key in part_attr_keys]
+                            lists = [related_node_properties.pop(key) for key in part_attr_keys]
                             keys = [key.removeprefix(original_prop_prefix) for key in part_attr_keys]
-                            related_node_dict[original_prop] = create_list_of_dicts(*lists, keys=keys)
+                            related_node_properties[original_prop] = create_list_of_dicts(*lists, keys=keys)
 
         root_node = subgraph['nodes'][0]
-        root_node_dict = convert_node(root_node)
+        root_node_dict = get_node_properties(root_node)
         add_relationships(root_node, root_node_dict,
                           [r for r in subgraph['relationships'] if r['start']['id'] == root_node['id']])
         return root_node_dict
@@ -607,12 +612,12 @@ class AASNeo4JClient(AASUploaderInNeo4J):
 def main():
     def optimized_upload_all_submodels(submodels_folder="examples/aas/test_dataset/"):
         # Use the OptimizedAASNeo4JClient for batch processing
-        optimized_client = AASUploaderInNeo4J(uri="bolt://localhost:7687", user="neo4j", password="password")
+        optimized_client = AASUploaderInNeo4J(uri="bolt://localhost:7687", user="neo4j", password="12345678")
         optimized_client._remove_all()
         # set timer
         import time
         start_time = time.time()
-        result = optimized_client.upload_all_aas_json_from_dir(submodels_folder, file_batch_size=100)
+        result = optimized_client.upload_all_aas_json_from_dir(submodels_folder, file_batch_size=100, db_batch_size=30000)
         end_time = time.time()
         print(f"Execution time: {end_time - start_time} seconds")
 

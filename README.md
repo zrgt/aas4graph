@@ -36,7 +36,7 @@ Todo:
 
 ## Run Neo4J server
 ```
-YOUR_PATH_TO_NEO4J\neo4j-community-5.23.0\bin\neo4j console
+YOUR_PATH_TO_NEO4J\neo4j-community-5.26.10\bin\neo4j console
 ```
 
 ## Add the AAS to Neo4j
@@ -44,7 +44,7 @@ YOUR_PATH_TO_NEO4J\neo4j-community-5.23.0\bin\neo4j console
 ```python
 from aas_mapping.aas_neo4j_client import AASNeo4JClient
 
-aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="password")
+aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="12345678")
 aas_neo4j_client.upload_aas_json_file("SOME_AAS.json")
 ```
 
