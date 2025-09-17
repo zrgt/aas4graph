@@ -94,18 +94,43 @@ class BaseNeo4JClient:
 
 
 class AASUploaderInNeo4J(BaseNeo4JClient):
+    # In AAS, multiple references may point to the same target. By deduplicating
+    # these references, we ensure that only one canonical instance is created
+    # and reused whenever all reference attributes are identical.
+    DEDUPLICATED_OBJECT_TYPES = {
+        "Reference": ["keys_value"],
+        # "Qualifier",
+        # "Extension",
+        # "ConceptDescription",
+        # "EmbeddedDataSpecification"
+    }
+
     DEFAULT_OPTIMIZATION_CLAUSES = [
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
-        "CREATE INDEX FOR (r:Referable) ON (r.index);",
+        "CREATE INDEX FOR (r:Referable) ON (r.se_list_index);",
     ]
 
     # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
-    COMPLEX_VALUE_LIST_AS_MULTIPLE_SIMPLE_VALUE_LISTS = {
+    # BEFORE: keys = [{"type": "GlobalReference", "value": "0173-1#02-AAW001#001"}}, ...]
+    # AFTER:  keys_type = ["GlobalReference", ...]
+    #         keys_value = ["0173-1#02-AAW001#001", ...]
+    LIST_OF_DICTS_PROP_AS_MULTIPLE_LIST_PROPS = {
+        "MultiLanguageProperty": ["value"],
         "DataSpecificationIec61360": ["preferredName", "shortName", "definition"],
         "Reference": ["keys"],
         # "Qualifiable": ["qualifiers"], The problem is that qualifier can have a SemanticId
         "Referable": ["description", "displayName"],
+    }
+
+    # Attributes of objects that are dictionaries and should be converted to multiple properties with simple values
+    # BEFORE: keys = {"type": "GlobalReference", "value": "0173-1#02-AAW001#001"}
+    # AFTER:  keys_type = "GlobalReference"
+    #         keys_value = "0173-1#02-AAW001#001"
+    DICT_PROP_AS_MULTIPLE_PROPS = {
+        "Reference": ["referredSemanticId"],
+        "AssetInformation": ["defaultThumbnail"],
+        "Identifiable": ["administration"],
     }
 
     def __init__(self, uri: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None):
@@ -131,10 +156,22 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         """
         property_list_of_dicts_to_model_as_multiple_lists = []
         for label in node_labels:
-            if label in self.COMPLEX_VALUE_LIST_AS_MULTIPLE_SIMPLE_VALUE_LISTS:
+            if label in self.LIST_OF_DICTS_PROP_AS_MULTIPLE_LIST_PROPS:
                 property_list_of_dicts_to_model_as_multiple_lists.extend(
-                    self.COMPLEX_VALUE_LIST_AS_MULTIPLE_SIMPLE_VALUE_LISTS[label])
+                    self.LIST_OF_DICTS_PROP_AS_MULTIPLE_LIST_PROPS[label])
         return property_list_of_dicts_to_model_as_multiple_lists
+
+    def _get_complex_props_to_model_as_multiple_simple_props(self, node_labels: Iterable[str]) -> List[str]:
+        """
+        Get the node properties that are list of dictionaries and should be converted to property lists.
+        """
+        property_list_of_dicts_to_model_as_multiple_simple_props = []
+        for label in node_labels:
+            if label in self.DICT_PROP_AS_MULTIPLE_PROPS:
+                property_list_of_dicts_to_model_as_multiple_simple_props.extend(
+                    self.DICT_PROP_AS_MULTIPLE_PROPS[label])
+        return property_list_of_dicts_to_model_as_multiple_simple_props
+
 
     def _gen_unique_node_name(self) -> int:
         self.uid_counter += 1
@@ -235,7 +272,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
     def _process_dict(self, obj: Dict, node_properties: Optional[Dict[str, any]] = None) -> Tuple[List[Dict], Dict[str, List]]:
         nodes = []
-        relationships = {}
+        relationships: dict[str, dict[str, str]] = {}
         node_properties = node_properties or {}
 
         node_uid = self._gen_unique_node_name()
@@ -246,18 +283,35 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         })
 
         # unpack the DICTS_TO_PROPERTY_LISTS
-        node_property_dicts_as_lists = self._get_props_to_model_as_multiple_lists(node_labels)
+        list_of_dicts_prop_as_multiple_list_props = self._get_props_to_model_as_multiple_lists(node_labels)
+        dict_prop_as_multiple_props = self._get_complex_props_to_model_as_multiple_simple_props(node_labels)
 
         for key, value in obj.items():
             if key in KEYS_TO_IGNORE:
                 continue
-            elif key in node_property_dicts_as_lists:
+            elif key in list_of_dicts_prop_as_multiple_list_props:
                 # BEFORE: keys = [{"type": "GlobalReference", "value": "0173-1#02-AAW001#001"}}, ...]
                 # AFTER:  keys_type = ["GlobalReference", ...]
                 #         keys_value = ["0173-1#02-AAW001#001", ...]
                 if value:
                     for dict_key in value[0].keys():
                         node_properties[f"{key}_{dict_key}"] = [dict_[dict_key] for dict_ in value]
+            elif key in dict_prop_as_multiple_props:
+                if value:
+                    child_nodes, child_rels = self._process_dict(value)
+                    if len(child_nodes) > 1:
+                        raise ValueError(f"The dict should have only one child node, got {len(child_nodes)}: {value}")
+
+                    for sub_key, sub_value in child_nodes[0].items():
+                        if sub_key not in ("uid", "labels"):
+                            node_properties[f"{key}_{sub_key}"] = sub_value
+
+                    rels = {
+                        f"{key}_{rel_type}": {**rel, "from_uid": node_uid}
+                        for rel_type, rel in child_rels.items()
+                    }
+                    self._merge_relationships(relationships, rels)
+
             elif isinstance(value, dict):
                 child_nodes, child_rels = self._process_dict(value)
                 nodes.extend(child_nodes)
