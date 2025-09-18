@@ -108,7 +108,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     DEFAULT_OPTIMIZATION_CLAUSES = [
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
-        "CREATE INDEX FOR (r:Referable) ON (r.se_list_index);",
+        "CREATE INDEX rel_se_list_index FOR () - [r:value]-() ON (r.se_list_index);"
     ]
 
     # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
@@ -186,13 +186,17 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
             grouped[labels].append(node)
         return grouped
 
-    def _add_relationship(self, relationships: Dict[str, List], rel_type: str, from_uid: int, to_uid: int):
+    def _add_relationship(self, relationships: Dict[str, List], rel_type: str, from_uid: int, to_uid: int,
+                          rel_props: Optional[dict] = None):
         """Add a relationship to the relationships dictionary."""
         if rel_type not in relationships:
             relationships[rel_type] = []
+        if rel_props is None:
+            rel_props = {}
         relationships[rel_type].append({
             'from_uid': from_uid,
             'to_uid': to_uid,
+            'rel_props': rel_props
         })
 
     def _merge_relationships(self, target: Dict[str, List], source: Dict[str, List]):
@@ -244,7 +248,8 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                     try:
                         prepared_rels.append({
                             'from_id': uid_to_internal_id[rel['from_uid']],
-                            'to_id': uid_to_internal_id[rel['to_uid']]
+                            'to_id': uid_to_internal_id[rel['to_uid']],
+                            'rel_props': rel['rel_props']
                         })
                     except KeyError:
                         logger.warning(
@@ -257,7 +262,8 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                     UNWIND $relationships AS rel
                     MATCH (from_node) WHERE elementId(from_node) = rel.from_id
                     MATCH (to_node) WHERE elementId(to_node) = rel.to_id
-                    CREATE (from_node)-[:{rel_type}]->(to_node)
+                    CREATE (from_node)-[r:{rel_type}]->(to_node)
+                    SET r = rel.rel_props
                     RETURN count(*) as created
                     """
 
@@ -326,13 +332,13 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
             elif isinstance(value, list):
                 for i, item in enumerate(value, start=0):
                     if isinstance(item, dict):
-                        child_nodes, child_rels = self._process_dict(item, node_properties={"se_list_index": i})
+                        child_nodes, child_rels = self._process_dict(item)
                         nodes.extend(child_nodes)
                         self._merge_relationships(relationships, child_rels)
 
                         # Create relationship to the last created node
                         if child_nodes:
-                            self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'])
+                            self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props={"se_list_index": i})
                     else:
                         logger.warning(f"Unsupported type in list: {type(item)}")
                         continue
@@ -613,7 +619,15 @@ class AASNeo4JClient(AASUploaderInNeo4J):
             return objs
 
         def add_relationships(node: Dict, node_dict: Dict, relationships: List[Dict]):
-            for rel in relationships:
+            # Sort relationships based on type and list entries by index
+            sorted_relationships = sorted(
+                relationships,
+                key=lambda x: (
+                    x.get("type"),  # Primary sort by type
+                    x.get("properties", {}).get("value", {}).get("se_list_index", float("inf"))  # Secondary sort
+                )
+            )
+            for rel in sorted_relationships:
                 if rel['start']['id'] == node['id']:
                     rel_type = rel['label']
                     if rel_type in SPECIFIC_RELATIONSHIPS:
@@ -621,8 +635,12 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                     related_node = next(n for n in subgraph['nodes'] if n['id'] == rel['end']['id'])
                     related_node_properties = get_node_properties(related_node)
 
-                    if "se_list_index" in related_node['properties']:
+                    if "properties" in rel and "se_list_index" in rel['properties']:
                         node_dict.setdefault(rel_type, []).append(related_node_properties)
+                        se_list_index = rel['properties']["se_list_index"]
+                        if len(node_dict[rel_type]) != se_list_index:
+                            logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
+                                           f"{len(node_dict[rel_type])} != {se_list_index}")
                     else:
                         node_dict[rel_type] = related_node_properties
 
@@ -630,13 +648,6 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                     add_relationships(related_node, related_node_properties,
                                       [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
 
-                    # Sort list entries by index in the dictionary and remove the index key
-                    for key, value in node_dict.items():
-                        if value and isinstance(value, list) and isinstance(value[0], dict) and value[0].get(
-                                'se_list_index') is not None:
-                            node_dict[key] = sorted(value, key=lambda x: x.get('se_list_index', 0))
-                            for item in node_dict[key]:
-                                item.pop('se_list_index', None)
 
                     # Handle specific keys for certain node types
                     related_node_labels = related_node['labels']
