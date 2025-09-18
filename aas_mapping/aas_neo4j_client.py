@@ -572,11 +572,11 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                 raise ValueError(f"Multiple nodes found with parent_id={parent_id} and id_short_path={id_short_path}")
             return result["node_id"][0]
 
-    def _find_node_clause(self, parent_id: str, id_short_path: Optional[str] = None) -> Optional[str]:
+    def _find_node_clause(self, parent_id: str, id_short_path: Optional[str] = None) -> (str, str):
         found_node = "the_node"
 
         if not id_short_path:
-            return f"MATCH ({found_node}:Identifiable {{id: '{parent_id}'}})\n"
+            return f"MATCH ({found_node}:Identifiable {{id: '{parent_id}'}})\n", found_node
 
         clause = f"MATCH (parent:Identifiable {{id: '{parent_id}'}})"
         id_shorts = aas_utils.itemize_id_short_path(id_short_path)
@@ -608,6 +608,44 @@ class AASNeo4JClient(AASUploaderInNeo4J):
     def _convert_referable_subgraph_to_dict(self, subgraph: Dict) -> Dict:
         """Take a Neo4J subgraph of a Referable and convert it to a dictionary."""
 
+        def group_prefixed_props_back_to_list_of_dicts_prop(node_labels: list[str], node_properties: dict):
+            props_with_list_of_dicts = self._get_props_to_model_as_multiple_lists(node_labels)
+            if not props_with_list_of_dicts:
+                return node_properties
+
+            for original_prop in props_with_list_of_dicts:
+                original_prop_prefix = original_prop + "_"
+
+                # Find all keys that belong to this original_prop
+                part_attr_keys = [key for key in node_properties if key.startswith(original_prop_prefix)]
+
+                if not part_attr_keys:
+                    continue
+
+                # Extract lists and strip the prefix from keys
+                lists = [node_properties.pop(key) for key in part_attr_keys]
+                keys = [key.removeprefix(original_prop_prefix) for key in part_attr_keys]
+                node_properties[original_prop] = create_list_of_dicts(*lists, keys=keys)
+            return node_properties
+
+        def group_prefixed_props_back_to_dict_prop(node_labels: list[str], node_properties: dict):
+            props_with_dicts = self._get_complex_props_to_model_as_multiple_simple_props(node_labels)
+            if not props_with_dicts:
+                return node_properties
+
+            for original_prop in props_with_dicts:
+                original_prop_prefix = original_prop + "_"
+
+                # Find all keys that belong to this original_prop
+                part_attr_keys = [key for key in node_properties if key.startswith(original_prop_prefix)]
+
+                if not part_attr_keys:
+                    continue
+
+                original_prop_value = {key.removeprefix(original_prop_prefix): node_properties.pop(key) for key in part_attr_keys}
+                node_properties[original_prop] = original_prop_value
+            return node_properties
+
         def get_node_properties(node: Dict) -> Dict:
             return {key: value for key, value in node['properties'].items()}
 
@@ -628,47 +666,34 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                 )
             )
             for rel in sorted_relationships:
-                if rel['start']['id'] == node['id']:
-                    rel_type = rel['label']
-                    if rel_type in SPECIFIC_RELATIONSHIPS:
+                rel_type = rel['label']
+                if rel['start']['id'] != node['id'] or rel_type in SPECIFIC_RELATIONSHIPS:
                         continue
-                    related_node = next(n for n in subgraph['nodes'] if n['id'] == rel['end']['id'])
-                    related_node_properties = get_node_properties(related_node)
 
-                    if "properties" in rel and "se_list_index" in rel['properties']:
-                        node_dict.setdefault(rel_type, []).append(related_node_properties)
-                        se_list_index = rel['properties']["se_list_index"]
-                        if len(node_dict[rel_type]) != se_list_index:
-                            logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
-                                           f"{len(node_dict[rel_type])} != {se_list_index}")
-                    else:
-                        node_dict[rel_type] = related_node_properties
+                related_node = next(n for n in subgraph['nodes'] if n['id'] == rel['end']['id'])
+                related_node_properties = get_node_properties(related_node)
+                if "properties" in rel and "se_list_index" in rel['properties']:
+                    node_dict.setdefault(rel_type, []).append(related_node_properties)
+                    se_list_index = rel['properties']["se_list_index"]
+                    if len(node_dict[rel_type]) != se_list_index:
+                        logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
+                                       f"{len(node_dict[rel_type])} != {se_list_index}")
+                else:
+                    node_dict[rel_type] = related_node_properties
 
-                    # Recursively process the related node if it has outgoing relationships
-                    add_relationships(related_node, related_node_properties,
-                                      [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
+                # Recursively process the related node if it has outgoing relationships
+                add_relationships(related_node, related_node_properties,
+                                  [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
 
 
-                    # Handle specific keys for certain node types
-                    related_node_labels = related_node['labels']
-                    props_list_of_dicts = self._get_props_to_model_as_multiple_lists(related_node_labels)
-                    if props_list_of_dicts:
-                        for original_prop in props_list_of_dicts:
-                            original_prop_prefix = original_prop + "_"
-
-                            # Find all keys that belong to this original_prop
-                            part_attr_keys = [key for key in related_node_properties if key.startswith(original_prop_prefix)]
-
-                            if not part_attr_keys:
-                                continue
-
-                            # Extract lists and strip the prefix from keys
-                            lists = [related_node_properties.pop(key) for key in part_attr_keys]
-                            keys = [key.removeprefix(original_prop_prefix) for key in part_attr_keys]
-                            related_node_properties[original_prop] = create_list_of_dicts(*lists, keys=keys)
+                # Handle specific keys for certain node types
+                related_node_properties = group_prefixed_props_back_to_list_of_dicts_prop(related_node['labels'], related_node_properties)
+                related_node_properties = group_prefixed_props_back_to_dict_prop(related_node['labels'], related_node_properties)
 
         root_node = subgraph['nodes'][0]
         root_node_dict = get_node_properties(root_node)
+        root_node_dict = group_prefixed_props_back_to_list_of_dicts_prop(root_node['labels'], root_node_dict)
+        root_node_dict = group_prefixed_props_back_to_dict_prop(root_node['labels'], root_node_dict)
         add_relationships(root_node, root_node_dict,
                           [r for r in subgraph['relationships'] if r['start']['id'] == root_node['id']])
         return root_node_dict
