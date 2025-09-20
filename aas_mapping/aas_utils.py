@@ -1,3 +1,5 @@
+import hashlib
+import json
 import re
 from typing import Dict, Tuple, List
 
@@ -39,13 +41,15 @@ def identify_types(obj: Dict) -> Tuple[str]:
         types = (class_name, *AAS_CLS_PARENTS[class_name])
         return types
     elif "type" in obj and obj["type"] in RELATIONSHIP_TYPES:
-        return ("Reference", obj["type"])
+        return ("Reference", )
     elif "kind" in obj and obj["kind"] in QUALIFIER_KINDS:
-        return ("Qualifier", obj["kind"])
+        return ("Qualifier", )
     elif "language" in obj and "text" in obj:
         return ("LangString",)
     elif "assetKind" in obj:
         return ("AssetInformation",)
+    elif "dataSpecification" in obj and "dataSpecificationContent" in obj:
+        return ("EmbeddedDataSpecification",)
     else:
         return ("Unknown",)
 
@@ -61,3 +65,8 @@ def itemize_id_short_path(id_short_path: str) -> List[str]:
     matches = re.findall(pattern, id_short_path)
     result = [match[0] if match[0] else int(match[1]) for match in matches]
     return result
+
+def hash_dict_obj(obj: dict) -> str:
+    # Sort keys to ensure deterministic hash
+    json_string = json.dumps(obj, sort_keys=True)
+    return hashlib.sha256(json_string.encode()).hexdigest()
