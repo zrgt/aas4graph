@@ -87,7 +87,17 @@ class BaseNeo4JClient:
                 if nodes_deleted < batch_size:
                     break
 
-    def save_clauses_to_file(file_name: str, clauses: CypherClause):
+    def _truncate_db(self, db_name="neo4j"):
+        """
+        Remove all nodes and relationships from the Neo4j database in batches.
+        It prevents memory errors on large databases.
+        """
+        with self.driver.session(database="system") as session:  # must run on system DB
+            session.run(f"CREATE OR REPLACE DATABASE {db_name};")
+            logger.info(f"Database '{db_name}' truncated successfully.")
+        session.close()
+
+    def save_clauses_to_file(self, file_name: str, clauses: CypherClause):
         """Save the generated Cypher clauses to a file."""
         with open(file_name, 'w', encoding='utf8') as file:
             file.write(clauses)
@@ -338,7 +348,10 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
                         # Create relationship to the last created node
                         if child_nodes:
-                            self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props={"se_list_index": i})
+                            rel_props = {"is_list": True}
+                            if "SubmodelElementList" in node_labels:
+                                rel_props = {"se_list_index": i}
+                            self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props=rel_props)
                     else:
                         logger.warning(f"Unsupported type in list: {type(item)}")
                         continue
@@ -672,12 +685,14 @@ class AASNeo4JClient(AASUploaderInNeo4J):
 
                 related_node = next(n for n in subgraph['nodes'] if n['id'] == rel['end']['id'])
                 related_node_properties = get_node_properties(related_node)
-                if "properties" in rel and "se_list_index" in rel['properties']:
+                if "properties" in rel and "is_list" in rel['properties'] and rel['properties']["is_list"]:
                     node_dict.setdefault(rel_type, []).append(related_node_properties)
-                    se_list_index = rel['properties']["se_list_index"]
-                    if len(node_dict[rel_type]) != se_list_index:
-                        logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
-                                       f"{len(node_dict[rel_type])} != {se_list_index}")
+                    if "se_list_index" in rel['properties']:
+                        se_list_index = rel['properties']["se_list_index"]
+                        if len(node_dict[rel_type])-1 != se_list_index:
+                            logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
+                                           f"{len(node_dict[rel_type])-1} != {se_list_index}")
+                            logger.warning(str(sorted_relationships))
                 else:
                     node_dict[rel_type] = related_node_properties
 
