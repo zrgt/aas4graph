@@ -98,7 +98,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     # these references, we ensure that only one canonical instance is created
     # and reused whenever all reference attributes are identical.
     DEDUPLICATED_OBJECT_TYPES = {
-        "Reference": ["keys_value"],
+        "Reference",
         # "Qualifier",
         # "Extension",
         # "ConceptDescription",
@@ -119,7 +119,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         "MultiLanguageProperty": ["value"],
         "DataSpecificationIec61360": ["preferredName", "shortName", "definition"],
         "Reference": ["keys"],
-        # "Qualifiable": ["qualifiers"], The problem is that qualifier can have a SemanticId
+        # "Qualifiable": ["qualifiers"] # Problem: qualifier can have a SemanticId
         "Referable": ["description", "displayName"],
     }
 
@@ -130,7 +130,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     DICT_PROP_AS_MULTIPLE_PROPS = {
         "Reference": ["referredSemanticId"],
         "AssetInformation": ["defaultThumbnail"],
-        "Identifiable": ["administration"],
+        # "Identifiable": ["administration"], # Problem: AdministrativeInfo can have a Reference in "creator" attr
     }
 
     def __init__(self, uri: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None):

@@ -21,7 +21,7 @@ AAS_CLS_PARENTS: dict[str, tuple[str]] = {
     'RelationshipElement': ('SubmodelElement', 'Referable', 'Qualifiable',),
     'AnnotatedRelationshipElement': ('RelationshipElement', 'SubmodelElement', 'Referable', 'Qualifiable',),
     'SubmodelElementCollection': ('SubmodelElement', 'Referable', 'Qualifiable',),
-    'SubmodelElementList': ('SubmodelElement', 'Referable', 'Qualifiable', 'Generic',),
+    'SubmodelElementList': ('SubmodelElement', 'Referable', 'Qualifiable',),
     'Blob': ('DataElement', 'SubmodelElement', 'Referable', 'Qualifiable',),
     'File': ('DataElement', 'SubmodelElement', 'Referable', 'Qualifiable',),
     'MultiLanguageProperty': ('DataElement', 'SubmodelElement', 'Referable', 'Qualifiable',),
