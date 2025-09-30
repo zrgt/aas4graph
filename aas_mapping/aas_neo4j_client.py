@@ -1,6 +1,8 @@
+import hashlib
 import logging
 import os
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from os.path import isfile, join
 from typing import Dict, List, Tuple, Optional, Set, Any, Iterable
@@ -111,7 +113,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         "Reference",
         # "Qualifier",
         # "Extension",
-        # "ConceptDescription",
+        "ConceptDescription",
         # "EmbeddedDataSpecification"
     }
 
@@ -145,9 +147,12 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
     def __init__(self, uri: Optional[str] = None, user: Optional[str] = None, password: Optional[str] = None):
         self.driver = neo4j.GraphDatabase.driver(uri, auth=(user, password)) if uri else None
-        if self.driver:
-            self.optimize_database()
         self.uid_counter = 0
+
+        # e.g. {HASH: uid}
+        self.deduplicated_nodes: dict[str: int] = {}
+        self.deduplicated_rels: set[str] = set()
+        self.uid_to_internal_id: dict[str: int] = {}
 
     def optimize_database(self):
         """Optimize the Neo4j database by creating all necessary indexes."""
@@ -159,6 +164,23 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                     logger.info(f"Index already exists: {clause}")
                 else:
                     logger.warning(f"Failed to create index: {clause}, Error: {e}")
+
+    def _remove_all_indexes_and_constraints(self):
+        def drop_all_indexes_and_constraints(tx):
+            # Drop all indexes
+            indexes = tx.run("SHOW INDEXES YIELD name").values()
+            for (name,) in indexes:
+                tx.run(f"DROP INDEX `{name}`")
+                print(f"Dropped index: {name}")
+
+            # Drop all constraints
+            constraints = tx.run("SHOW CONSTRAINTS YIELD name").values()
+            for (name,) in constraints:
+                tx.run(f"DROP CONSTRAINT `{name}`")
+                print(f"Dropped constraint: {name}")
+
+        with self.driver.session() as session:
+            session.execute_write(drop_all_indexes_and_constraints)
 
     def _get_props_to_model_as_multiple_lists(self, node_labels: Iterable[str]) -> List[str]:
         """
@@ -404,14 +426,65 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         # Group nodes and filter relationships for this batch
         grouped_nodes = self._group_nodes_by_label(nodes)
 
+        # --- 🔧 Deduplication step ---
+        deduplicated_uid_map = {}  # new_uid -> existing_uid mapping for this batch
 
+        for label_tuple in list(grouped_nodes.keys()):
+            # Check if any of the labels in this tuple should be deduplicated
+            if not any(lbl in self.DEDUPLICATED_OBJECT_TYPES for lbl in label_tuple):
+                continue
+
+            filtered_nodes = []
+            for node in grouped_nodes[label_tuple]:
+                node_uid = node["uid"]
+
+                node_copy = deepcopy(node)
+                node_copy.pop("uid")
+                # Deterministic JSON hash from properties
+                hash_input = json.dumps(node_copy, sort_keys=True)
+                hash_value = hashlib.sha256(hash_input.encode()).hexdigest()
+
+                if hash_value in self.deduplicated_nodes:
+                    # This node already exists (deduplicate)
+                    existing_uid = self.deduplicated_nodes[hash_value]
+                    deduplicated_uid_map[node_uid] = existing_uid
+                else:
+                    node["hash"] = hash_value
+                    # First time we see this node -> keep it
+                    self.deduplicated_nodes[hash_value] = node_uid
+                    filtered_nodes.append(node)
+
+            # Replace node list with deduplicated version
+            grouped_nodes[label_tuple] = filtered_nodes
+
+        # --- 🔧 Rewrite relationships to use deduplicated UIDs ---
+        if deduplicated_uid_map:
+            for rel_type, rel_list in relationships.items():
+                for rel in rel_list:
+                    if rel["from_uid"] in deduplicated_uid_map:
+                        rel["from_uid"] = deduplicated_uid_map[rel["from_uid"]]
+                    if rel["to_uid"] in deduplicated_uid_map:
+                        rel["to_uid"] = deduplicated_uid_map[rel["to_uid"]]
+
+        if deduplicated_uid_map: # TODO: Fast half-working temporal solution. DELETE!
+            for rel_type, rel_list in relationships.items():
+                unique_rels = []
+                seen = set()
+                for rel in rel_list:
+                    key = (rel['from_uid'], rel['to_uid'])
+                    if key not in seen:
+                        seen.add(key)
+                        unique_rels.append(rel)
+                relationships[rel_type] = unique_rels
+
+        # --- Continue with database operations ---
         with self.driver.session() as session:
             # 1. Create Nodes in Batches
             node_start_time = time.time()
-            uid_to_internal_id = self._create_nodes(session, grouped_nodes)
+            self.uid_to_internal_id.update(self._create_nodes(session, grouped_nodes))
             if exist_uid_to_internal_id:
                 # Merge existing UID to internal ID mapping with newly created nodes
-                uid_to_internal_id.update(exist_uid_to_internal_id)
+                self.uid_to_internal_id.update(exist_uid_to_internal_id)
 
             node_creation_time = time.time() - node_start_time
             stats.total_node_creation_time += node_creation_time
@@ -421,16 +494,17 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
             # 2. Create Relationships in Batches
             rel_start_time = time.time()
-            relationship_count = self._create_relationships(session, relationships, uid_to_internal_id, db_batch_size)
+            relationship_count = self._create_relationships(session, relationships, self.uid_to_internal_id, db_batch_size)
             relationship_creation_time = time.time() - rel_start_time
             stats.total_relationship_creation_time += relationship_creation_time
             stats.total_relationships_created += relationship_count
             logger.info(f"Created {relationship_count} relationships in {relationship_creation_time:.2f} seconds")
 
             # 3. Cleanup UIDs in Batches
-            self._cleanup_uids_in_session(session, list(uid_to_internal_id.values()), db_batch_size)
+            # self._cleanup_uids_in_session(session, list(uid_to_internal_id.values()), db_batch_size)
 
-        del grouped_nodes, uid_to_internal_id
+        # del grouped_nodes, uid_to_internal_id
+        del grouped_nodes
 
         return stats
 
@@ -718,7 +792,9 @@ def main():
     def optimized_upload_all_submodels(submodels_folder="examples/aas/test_dataset/"):
         # Use the OptimizedAASNeo4JClient for batch processing
         optimized_client = AASUploaderInNeo4J(uri="bolt://localhost:7687", user="neo4j", password="12345678")
-        optimized_client._remove_all()
+        # optimized_client._truncate_db()
+        optimized_client._remove_all_indexes_and_constraints()
+        optimized_client.optimize_database()
         # set timer
         import time
         start_time = time.time()
@@ -726,8 +802,14 @@ def main():
         end_time = time.time()
         print(f"Execution time: {end_time - start_time} seconds")
 
+    def get_sm_from_neo4j():
+        client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="12345678")
+        sm = client.get_identifiable('https://smart.festo.com/sm/004/2dcd48b2-88a5-463a-9396-deaece98b4c9/')
+        print(sm)
+
+
     logger.setLevel(logging.INFO)
-    optimized_upload_all_submodels()
+    optimized_upload_all_submodels() # submodels_folder="examples/submodels/")
 
 
 if __name__ == '__main__':
