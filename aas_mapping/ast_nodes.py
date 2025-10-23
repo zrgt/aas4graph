@@ -5,34 +5,19 @@ from abc import ABC, abstractmethod
 
 
 class Node(ABC):
-    """
-    Abstract base class for all AST nodes.
-    """
     pass
 
 
 class Value(Node, ABC):
-    """
-    Abstract base class for all value nodes.
-    """
     pass
 
 
 class Expression(Node, ABC):
-    """
-    Abstract base class for all expression nodes.
-    """
     pass
 
 
 @dataclass
 class Field(Value):
-    """
-    Represents a field in the AST.
-
-    Attributes:
-        name (str): The name of the field.
-    """
     name: str
 
     def __repr__(self): return f'Field("{self.name}")'
@@ -40,12 +25,6 @@ class Field(Value):
 
 @dataclass
 class StringValue(Value):
-    """
-    Represents a string value in the AST.
-
-    Attributes:
-        value (str): The string value.
-    """
     value: str
 
     def __repr__(self): return f'StringValue("{self.value}")'
@@ -53,12 +32,6 @@ class StringValue(Value):
 
 @dataclass
 class NumberValue(Value):
-    """
-    Represents a numeric value in the AST.
-
-    Attributes:
-        value (float): The numeric value.
-    """
     value: float
 
     def __repr__(self): return f'NumberValue({self.value})'
@@ -66,12 +39,6 @@ class NumberValue(Value):
 
 @dataclass
 class BooleanValue(Value):
-    """
-    Represents a boolean value in the AST.
-
-    Attributes:
-        value (bool): The boolean value.
-    """
     value: bool
 
     def __repr__(self): return f'BooleanValue({self.value})'
@@ -79,12 +46,6 @@ class BooleanValue(Value):
 
 @dataclass
 class StrCast(Value):
-    """
-    Represents a string cast operation in the AST.
-
-    Attributes:
-        inner (Value): The value to be cast to string.
-    """
     inner: Value
 
     def __repr__(self): return f"Str({self.inner})"
@@ -92,12 +53,6 @@ class StrCast(Value):
 
 @dataclass
 class NumCast(Value):
-    """
-    Represents a numeric cast operation in the AST.
-
-    Attributes:
-        inner (Value): The value to be cast to number.
-    """
     inner: Value
 
     def __repr__(self): return f"Num({self.inner})"
@@ -105,13 +60,6 @@ class NumCast(Value):
 
 @dataclass
 class BinaryExpression(Expression):
-    """
-    Represents a binary expression in the AST.
-
-    Attributes:
-        left (Value): The left operand.
-        right (Value): The right operand.
-    """
     left: Value
     right: Value
 
@@ -123,9 +71,6 @@ class BinaryExpression(Expression):
 
 @dataclass
 class Eq(BinaryExpression):
-    """
-    Represents an equality expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "="
@@ -135,9 +80,6 @@ class Eq(BinaryExpression):
 
 @dataclass
 class Ne(BinaryExpression):
-    """
-    Represents a not-equal expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "<>"
@@ -147,9 +89,6 @@ class Ne(BinaryExpression):
 
 @dataclass
 class Gt(BinaryExpression):
-    """
-    Represents a greater-than expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return ">"
@@ -159,9 +98,6 @@ class Gt(BinaryExpression):
 
 @dataclass
 class Ge(BinaryExpression):
-    """
-    Represents a greater-than-or-equal expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return ">="
@@ -171,9 +107,6 @@ class Ge(BinaryExpression):
 
 @dataclass
 class Lt(BinaryExpression):
-    """
-    Represents a less-than expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "<"
@@ -183,9 +116,6 @@ class Lt(BinaryExpression):
 
 @dataclass
 class Le(BinaryExpression):
-    """
-    Represents a less-than-or-equal expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "<="
@@ -195,9 +125,6 @@ class Le(BinaryExpression):
 
 @dataclass
 class Contains(BinaryExpression):
-    """
-    Represents a contains expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "CONTAINS"
@@ -207,9 +134,6 @@ class Contains(BinaryExpression):
 
 @dataclass
 class StartsWith(BinaryExpression):
-    """
-    Represents a starts-with expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "STARTS WITH"
@@ -219,9 +143,6 @@ class StartsWith(BinaryExpression):
 
 @dataclass
 class EndsWith(BinaryExpression):
-    """
-    Represents an ends-with expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "ENDS WITH"
@@ -231,9 +152,6 @@ class EndsWith(BinaryExpression):
 
 @dataclass
 class Regex(BinaryExpression):
-    """
-    Represents a regex match expression in the AST.
-    """
     @staticmethod
     def get_operator() -> str:
         return "=~"
@@ -243,12 +161,6 @@ class Regex(BinaryExpression):
 
 @dataclass
 class Match(Expression):
-    """
-    Represents a match expression in the AST.
-
-    Attributes:
-        operands (List[Expression]): The list of expressions to match.
-    """
     operands: List[Expression]
 
     @staticmethod
@@ -260,12 +172,6 @@ class Match(Expression):
 
 @dataclass
 class And(Expression):
-    """
-    Represents a logical AND expression in the AST.
-
-    Attributes:
-        operands (List[Expression]): The list of expressions to AND together.
-    """
     operands: List[Expression]
 
     @staticmethod
@@ -277,12 +183,6 @@ class And(Expression):
 
 @dataclass
 class Or(Expression):
-    """
-    Represents a logical OR expression in the AST.
-
-    Attributes:
-        operands (List[Expression]): The list of expressions to OR together.
-    """
     operands: List[Expression]
 
     @staticmethod
@@ -294,12 +194,6 @@ class Or(Expression):
 
 @dataclass
 class Not(Expression):
-    """
-    Represents a logical NOT expression in the AST.
-
-    Attributes:
-        operand (Expression): The expression to negate.
-    """
     operand: Expression
 
     @staticmethod
@@ -311,12 +205,6 @@ class Not(Expression):
 
 @dataclass
 class Condition(Node):
-    """
-    Represents a top-level condition wrapper in the AST.
-
-    Attributes:
-        expr (Expression): The root expression of the condition tree.
-    """
     expr: Expression
 
     def __repr__(self): return f"Condition({self.expr})"
