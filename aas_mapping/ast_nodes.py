@@ -167,7 +167,7 @@ class Match(Expression):
     def get_operator() -> str:
         return "AND"
 
-    def __repr__(self): return f"Match({', '.join(map(str, self.operands))})"
+    def __repr__(self): return f"Match([{', '.join(map(str, self.operands))}])"
 
 
 @dataclass
@@ -178,7 +178,7 @@ class And(Expression):
     def get_operator() -> str:
         return "AND"
 
-    def __repr__(self): return f"And({', '.join(map(str, self.operands))})"
+    def __repr__(self): return f"And([{', '.join(map(str, self.operands))}])"
 
 
 @dataclass
@@ -189,7 +189,7 @@ class Or(Expression):
     def get_operator() -> str:
         return "OR"
 
-    def __repr__(self): return f"Or({', '.join(map(str, self.operands))})"
+    def __repr__(self): return f"Or([{', '.join(map(str, self.operands))}])"
 
 
 @dataclass
