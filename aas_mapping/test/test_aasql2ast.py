@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from aas_mapping.parser import parse_query
 
-class TestAllExamples(unittest.TestCase):
-    def test_all_examples(self):
+class TestQuerriesToAstExamples(unittest.TestCase):
+    def test_examples_parse_to_expected_ast(self):
         query_dir = "aas_mapping/examples/queries"
         solution_dir = "aas_mapping/examples/ast"
         for file_name in os.listdir(query_dir):
