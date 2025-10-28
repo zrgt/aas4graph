@@ -3,12 +3,41 @@ from typing import Tuple
 from aas_mapping.ast_nodes import *
 
 
-def _convert_field(field: Field) -> Tuple[str, str]:
-    root, attribute = field.name.split("#")
-    match_part = ""
-    where_part = ""
-    last_root = None
-    index = []
+def _convert_sme(root: str) -> Tuple[str, str]:
+    if "$sme" not in root:
+        raise ValueError(f"Root does not contain $sme: {root}")
+    match_part: str = "(sm:Submodel)-[:submodelElements]->"
+    last_root: str = ""
+    depth = 0
+    for part in root.split(".")[1:]:
+        if "[" in part:
+            for p in part.split("["):
+                if "]" not in p:
+                    if depth == 0:
+                        match_part += f"(sme{depth}:SubmodelElement {{idShort: '{p}'}})"
+                    else:
+                        match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{p}'}})"
+                elif len(p) > 1:
+                    match_part += f"-[:value {{\'se_list_index\': {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
+                else:
+                    match_part += f"-[:value]->(sme{depth}:SubmodelElement)"
+        else:
+            if depth == 0:
+                match_part += f"(sme{depth}:SubmodelElement {{idShort: '{part}'}})"
+            else:
+                match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{part}'}})"
+            last_root = f"sme{depth}"
+        depth += 1
+    if last_root != "":
+        return match_part, last_root
+    match_part += f"(sme: SubmodelElement)"
+    last_root = "sme"
+    return match_part, last_root
+
+
+def _convert_root(root: str) -> Tuple[str, str]:
+    match_part: str = ""
+    last_root: str = ""
     match root:
         case "$aas":
             match_part += "(aas:AssetAdministrationShell)"
@@ -19,46 +48,97 @@ def _convert_field(field: Field) -> Tuple[str, str]:
         case "$cd":
             match_part += "(cd:ConceptDescription)"
             last_root = "cd"
-        case "$sme":
-            match_part += "(sm:Submodel)-[:submodelElements]->(sme:SubmodelElement)"
-            last_root = "sme"
         case _:
-            if "$sme" in root:
-                match_part += "(sm:Submodel)-[:submodelElements]->(sme:SubmodelElement)"
-                last_root = "sme"
-            else:
-                raise ValueError(f"Unknown root in field: {field.name}")
+            match_part, last_root = _convert_sme(root)
+    return match_part, last_root
+
+
+def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, str, bool]:
+    match_part: str = ""
+    where_part: str = ""
+    index = None
+    isList = False
     for part in attribute.split("."):
         match part:
-            case "description":
-                where_part += f"{last_root}.description_"
+            case "id":
+                where_part += f"{last_root}.id"
+            case "idShort":
+                where_part += f"{last_root}.idShort"
             case "assetInformation":
-                match_part += f"-[:assetInformation]->(assetInformation:AssetInformation)"
+                # In specification, assetInformation can be chained
+                match_part += "-[:assetInformation]->(assetInformation:AssetInformation)"
                 last_root = "assetInformation"
-            case "semanticId":
-                match_part += f"-[:semanticId]->(semanticId:Reference)"
-                last_root = "semanticId"
-            case "derivedFrom":
-                match_part += f"-[:derivedFrom]->(derivedFrom:Reference)"
-                last_root = "derivedFrom"
-            case "administration":
-                match_part += f"-[:administration]->(administration)"
-                last_root = "administration"
-            case "qualifiers":
-                match_part += f"-[:qualifiers]->(qualifiers:Qualifier)"
-                last_root = "qualifiers"
-            case _:
-                if "keys" in part:
-                    where_part += f"{last_root}.keys_"
-                    index.append(part[5:-1])
-                if "specificAssetIds" in part:
-                    match_part += f"-[:specificAssetIds]->(specificAssetIds)"
-                    last_root = "specificAssetIds"
-                if where_part == "":
-                    where_part += f"{last_root}.{part}"
+            case "assetKind":
+                where_part += f"{last_root}.assetKind"
+            case "assetType":
+                where_part += f"{last_root}.assetType"
+            case "globalAssetId":
+                where_part += f"{last_root}.globalAssetId"
+            case "name":
+                where_part += f"{last_root}.name"
+            case "value":
+                # If value is part of MultiLanguageProperty, we need to access value_type. We make sure last_root is multiLanguageProperty
+                if last_root == "multiLanguageProperty":
+                    where_part += f"{last_root}.value_text"
+                    isList = True
+                # If value is part of Reference, then value is part of keys.
+                elif last_root == "reference":
+                    if index is not None:
+                        where_part += f"{last_root}.keys_value[{index}]"
+                        index = None
+                    else:
+                        where_part += f"{last_root}.keys_value"
+                        isList = True
                 else:
-                    where_part += f".{part}"
-    return where_part, match_part
+                    where_part += f"{last_root}.value"
+            case "externalSubjectId":
+                match_part += "-[:externalSubjectId]->(externalSubjectId)"
+                last_root = "externalSubjectId"
+            case "type":
+                # If type is part of Reference, then type is part of keys.
+                if last_root == "reference":
+                    if index is not None:
+                        where_part += f"{last_root}.keys_type[{index}]"
+                        index = None
+                    else:
+                        where_part += f"{last_root}.keys_type"
+                        isList = True
+                else:
+                    where_part += f"{last_root}.type"
+            case "submodels":
+                match_part += "-[:submodels]->(submodels:Reference)"
+                last_root = "submodels"
+            case "semanticId":
+                match_part += "-[:semanticId]->(semanticId)"
+                last_root = "semanticId"
+                if part.endswith("semanticId"):
+                    where_part += f"{last_root}.keys_value[0]"
+            case "valueType":
+                where_part += f"{last_root}.valueType"
+            case "language":
+                where_part += f"{last_root}.value_language"
+                isList = True
+            case _ if part.startswith("keys"):
+                last_root = "reference"
+                if part.index("[") + 1 < len(part) - 1:
+                    index = int(part[part.index("[") + 1: part.index("]")])
+            case _ if part.startswith("specificAssetIds"):
+                # specificAssetIds are relations. To access by index, we need order of them, which is not implemented yet.
+                match_part += "-[:specificAssetIds]->(specificAssetIds)"
+                last_root = "specificAssetIds"
+            case _:
+                raise ValueError(f"Unknown attribute element in field: {part}")
+
+    return where_part, match_part, isList
+
+
+def _convert_field(field: Field) -> Tuple[str, str, bool]:
+    root, attribute = field.name.split("#")
+    match_part, last_root = _convert_root(root)
+    where_part, match_addition, isList = _convert_attribute_elements(attribute, last_root)
+    match_part += match_addition
+    return where_part, match_part, isList
+
 
 def _convert_value(value: Value):
     match value:
@@ -69,9 +149,10 @@ def _convert_value(value: Value):
         case NumCast():
             raise NotImplementedError("NumCast not implemented yet")
         case StringValue() | NumberValue() | BooleanValue():
-            return value.value if isinstance(value.value, (int, float)) else f"'{value.value}'", ""
+            return value.value if isinstance(value.value, (int, float, bool)) else f"'{value.value}'", "", False
         case _:
             raise ValueError(f"Unsupported value type: {type(value)}")
+
 
 def _convert_expression(exp: Expression):
     match exp:
@@ -79,6 +160,9 @@ def _convert_expression(exp: Expression):
             left = _convert_value(exp.left)
             right = _convert_value(exp.right)
             operator = exp.get_operator()
+            # If field returns a list, compare using IN operator
+            if (left[2] or right[2]) and operator == "=":
+                return f"{left[0]} IN {right[0]}", [left[1], right[1]]
             return f"{left[0]} {operator} {right[0]}", [left[1], right[1]]
         case Not():
             inner, fields = _convert_expression(exp.operand)
@@ -95,7 +179,6 @@ def _convert_expression(exp: Expression):
 def converter(ast: Condition):
     if isinstance(ast, Condition):
         where_field, match_field = _convert_expression(ast.expr)
-        match_field = [x for x in match_field if not any((x != y and x in y) for y in match_field)]
         return f"MATCH {",".join(match_field)}\nWHERE {where_field}\nRETURN {match_field[0].split(':')[0][1:]}"
     else:
         raise ValueError(f"Expected Condition node, got {type(ast)}")
