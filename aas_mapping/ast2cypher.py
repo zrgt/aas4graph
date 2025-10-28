@@ -1,4 +1,5 @@
 from typing import Tuple
+import re
 
 from aas_mapping.ast_nodes import *
 
@@ -37,16 +38,17 @@ def _convert_sme(root: str) -> Tuple[str, str]:
                     else:
                         match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{p}'}})"
                 elif len(p) > 1:
-                    match_part += f"-[:value {{\'se_list_index\': {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
+                    match_part += f"-[:value {{se_list_index: {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
                 else:
                     match_part += f"-[:value]->(sme{depth}:SubmodelElement)"
+                depth += 1
         else:
             if depth == 0:
                 match_part += f"(sme{depth}:SubmodelElement {{idShort: '{part}'}})"
             else:
                 match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{part}'}})"
             last_root = f"sme{depth}"
-        depth += 1
+            depth += 1
     if last_root != "":
         return match_part, last_root
     match_part += f"(sme: SubmodelElement)"
@@ -258,6 +260,58 @@ def _convert_expression(exp: Expression):
             raise ValueError(f"Unsupported expression type: {type(exp)}")
 
 
+def _combine_match_parts(where_parts: list[str], match_parts: list[str]) -> Tuple[list[str], list[str]]:
+    """
+    Combine multiple where parts and match parts into consolidated lists.
+
+    - Removes duplicates and empty fragments.
+    - Renames reused variable names (except root nodes like sm, aas, cd).
+    - Updates WHERE parts accordingly so variable renames remain consistent.
+
+    Returns:
+        (combined_where_parts, combined_match_parts)
+    """
+    clean_matches: list[str] = []
+    seen = set()
+    rename_map = {}
+    used_vars = set()
+    counter = {}
+
+    ROOTS = {"sm", "aas", "cd"}
+
+    for m in match_parts:
+        m = re.sub(r"[,\s]+", " ", m.strip())
+        if m and m not in seen:
+            seen.add(m)
+            clean_matches.append(m)
+
+    new_matches = []
+    for m in clean_matches:
+        vars_in_m = re.findall(r"\((\w+):", m)
+        for v in vars_in_m:
+            if v in ROOTS:
+                used_vars.add(v)
+                continue
+            if v in used_vars:
+                counter[v] = counter.get(v, 0) + 1
+                new_v = f"{v}{counter[v]}"
+                rename_map[v] = new_v
+                used_vars.add(new_v)
+                m = re.sub(rf"\b{v}\b", new_v, m)
+            else:
+                used_vars.add(v)
+        new_matches.append(m)
+
+    new_where_parts = []
+    for w in where_parts:
+        for old, new in rename_map.items():
+            w = re.sub(rf"\b{old}\b", new, w)
+        new_where_parts.append(w)
+
+    return new_where_parts, new_matches
+
+
+
 def converter(ast: Condition) -> str:
     """
     Convert an AST Condition node to a full Cypher query string.
@@ -275,8 +329,20 @@ def converter(ast: Condition) -> str:
     Raises:
         ValueError: if the provided AST is not a Condition.
     """
-    if isinstance(ast, Condition):
-        where_field, match_field = _convert_expression(ast.expr)
-        return f"MATCH {",".join(match_field)}\nWHERE {where_field}\nRETURN {match_field[0].split(':')[0][1:]}"
-    else:
+    if not isinstance(ast, Condition):
         raise ValueError(f"Expected Condition node, got {type(ast)}")
+
+    where_expr, match_parts = _convert_expression(ast.expr)
+    where_parts = [where_expr]
+
+    combined_where, combined_matches = _combine_match_parts(where_parts, match_parts)
+
+    first_match = combined_matches[0]
+    match_var = re.findall(r"\((\w+):", first_match)
+    return_var = match_var[0] if match_var else "sm"
+
+    cypher = "MATCH " + "\nMATCH ".join(combined_matches)
+    cypher += "\nWHERE " + " AND ".join(combined_where)
+    cypher += f"\nRETURN {return_var}"
+    return cypher
+
