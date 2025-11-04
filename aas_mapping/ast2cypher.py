@@ -111,6 +111,7 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
     where_part: str = ""
     index = None
     isList = False
+    multiple_assetInformation = attribute.count("assetInformation") > 1
     for part in attribute.split("."):
         match part:
             case "id":
@@ -119,8 +120,13 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
                 where_part += f"{last_root}.idShort"
             case "assetInformation":
                 # In specification, assetInformation can be chained
-                match_part += "-[:assetInformation]->(assetInformation:AssetInformation)"
-                last_root = "assetInformation"
+                if multiple_assetInformation:
+                    match_part += "-[:assetInformation]->(assetInformation0:AssetInformation)"
+                    last_root = "assetInformation0"
+                    multiple_assetInformation = False
+                else:
+                    match_part += "-[:assetInformation]->(assetInformation:AssetInformation)"
+                    last_root = "assetInformation"
             case "assetKind":
                 where_part += f"{last_root}.assetKind"
             case "assetType":
@@ -176,8 +182,11 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
                 if part.index("[") + 1 < len(part) - 1:
                     index = int(part[part.index("[") + 1: part.index("]")])
             case _ if part.startswith("specificAssetIds"):
-                # TODO: specificAssetIds can be accessed with index as well, but not implemented yet
-                match_part += "-[:specificAssetIds]->(specificAssetIds)"
+                # specificAssetIds can be referenced by index
+                if "[]" in part:
+                    match_part += "-[:specificAssetIds]->(specificAssetIds)"
+                else:
+                    match_part += f"-[:specificAssetIds {{se_list_index: {part[-2:-1]}}}]->(specificAssetIds)"
                 last_root = "specificAssetIds"
             case _:
                 raise ValueError(f"Unknown attribute element in field: {part}")
@@ -297,7 +306,7 @@ def _combine_match_parts(where_parts: list[str], match_parts: list[str]) -> Tupl
                 new_v = f"{v}{counter[v]}"
                 rename_map[v] = new_v
                 used_vars.add(new_v)
-                m = re.sub(rf"\b{v}\b", new_v, m)
+                m = re.sub(rf"(?<!:)\b{v}\b", new_v, m)
             else:
                 used_vars.add(v)
         new_matches.append(m)
