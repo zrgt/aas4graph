@@ -5,7 +5,7 @@ from aas_mapping.ast_nodes import *
 
 
 
-def _convert_sme(root: str, mapping: dict) -> Tuple[str, str]:
+def _convert_sme(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
     """
     Convert a SubmodelElement root string to a Cypher match part and last root identifier.
 
@@ -63,7 +63,7 @@ def _convert_sme(root: str, mapping: dict) -> Tuple[str, str]:
     return match_part, last_root
 
 
-def _convert_root(root: str, mapping: dict) -> Tuple[str, str]:
+def _convert_root(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
     """
     Convert the root part of a field to a Cypher match part and last root identifier.
 
@@ -94,7 +94,7 @@ def _convert_root(root: str, mapping: dict) -> Tuple[str, str]:
     return match_part, last_root
 
 
-def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict) -> Tuple[str, str, bool]:
+def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict[str, int]) -> Tuple[str, str, bool]:
     """
     Convert attribute elements of a field to Cypher WHERE expression and MATCH addition.
 
@@ -210,7 +210,7 @@ def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict) -
     return where_part, match_part, isList
 
 
-def _convert_field(field: Field, mapping: dict) -> Tuple[str, str, bool]:
+def _convert_field(field: Field, mapping: dict[str, int]) -> Tuple[str, str, bool]:
     """
     Convert an AST Field node to Cypher where part and match part.
 
@@ -227,7 +227,7 @@ def _convert_field(field: Field, mapping: dict) -> Tuple[str, str, bool]:
     return where_part, match_part, isList
 
 
-def _convert_value(value: Value, mapping: dict) -> Tuple[str, str, bool]:
+def _convert_value(value: Value, mapping: dict[str, int]) -> Tuple[str, str, bool]:
     """
     Convert an AST Value node to a Cypher query string and associated fields.
 
@@ -243,8 +243,10 @@ def _convert_value(value: Value, mapping: dict) -> Tuple[str, str, bool]:
         case Field():
             return _convert_field(value, mapping)
         case StrCast():
+            # TODO: implement StrCast conversion
             raise NotImplementedError("StrCast not implemented yet")
         case NumCast():
+            # TODO: implement NumCast conversion
             raise NotImplementedError("NumCast not implemented yet")
         case StringValue() | NumberValue() | BooleanValue():
             return value.value if isinstance(value.value, (int, float, bool)) else f"'{value.value}'", "", False
@@ -252,7 +254,7 @@ def _convert_value(value: Value, mapping: dict) -> Tuple[str, str, bool]:
             raise ValueError(f"Unsupported value type: {type(value)}")
 
 
-def _convert_expression(exp: Expression, mapping: dict) -> Tuple[str, list[str]]:
+def _convert_expression(exp: Expression, mapping: dict[str, int]) -> Tuple[str, list[str]]:
     """
     Convert an AST Expression node to a Cypher WHERE expression string and list of match fragments.
 
@@ -322,7 +324,7 @@ def converter(ast: Condition) -> str:
     if not isinstance(ast, Condition):
         raise ValueError(f"Expected Condition node, got {type(ast)}")
 
-    mapping: dict = {}
+    mapping: dict[str, int] = {}
     where_parts, match_parts = _convert_expression(ast.expr, mapping)
 
     combined_where, combined_matches = [where_parts], _remove_duplicate_matches(match_parts)
