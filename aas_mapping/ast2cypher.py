@@ -3,10 +3,9 @@ import re
 
 from aas_mapping.ast_nodes import *
 
-mapping = {} # TODO: make this per-conversion state
 
 
-def _convert_sme(root: str) -> Tuple[str, str]:
+def _convert_sme(root: str, mapping: dict) -> Tuple[str, str]:
     """
     Convert a SubmodelElement root string to a Cypher match part and last root identifier.
 
@@ -64,7 +63,7 @@ def _convert_sme(root: str) -> Tuple[str, str]:
     return match_part, last_root
 
 
-def _convert_root(root: str) -> Tuple[str, str]:
+def _convert_root(root: str, mapping: dict) -> Tuple[str, str]:
     """
     Convert the root part of a field to a Cypher match part and last root identifier.
 
@@ -91,11 +90,11 @@ def _convert_root(root: str) -> Tuple[str, str]:
             match_part += "(cd:ConceptDescription)"
             last_root = "cd"
         case _:
-            match_part, last_root = _convert_sme(root)
+            match_part, last_root = _convert_sme(root, mapping)
     return match_part, last_root
 
 
-def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, str, bool]:
+def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict) -> Tuple[str, str, bool]:
     """
     Convert attribute elements of a field to Cypher WHERE expression and MATCH addition.
 
@@ -128,7 +127,7 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
             case "assetInformation":
                 if "assetInformation" not in mapping:
                     mapping["assetInformation"] = 0
-                match_part += f"-[:assetInformation]->(assetInformation{mapping["assetInformation"]}:AssetInformation)"
+                match_part += f"-[:assetInformation]->(assetInformation{mapping['assetInformation']}:AssetInformation)"
                 last_root = f"assetInformation{mapping['assetInformation']}"
                 mapping["assetInformation"] += 1
             case "assetKind":
@@ -211,7 +210,7 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
     return where_part, match_part, isList
 
 
-def _convert_field(field: Field) -> Tuple[str, str, bool]:
+def _convert_field(field: Field, mapping: dict) -> Tuple[str, str, bool]:
     """
     Convert an AST Field node to Cypher where part and match part.
 
@@ -222,13 +221,13 @@ def _convert_field(field: Field) -> Tuple[str, str, bool]:
         (where_part, match_part, isList)
     """
     root, attribute = field.name.split("#")
-    match_part, last_root = _convert_root(root)
-    where_part, match_addition, isList = _convert_attribute_elements(attribute, last_root)
+    match_part, last_root = _convert_root(root, mapping)
+    where_part, match_addition, isList = _convert_attribute_elements(attribute, last_root, mapping)
     match_part += match_addition
     return where_part, match_part, isList
 
 
-def _convert_value(value: Value):
+def _convert_value(value: Value, mapping: dict) -> Tuple[str, str, bool]:
     """
     Convert an AST Value node to a Cypher query string and associated fields.
 
@@ -242,7 +241,7 @@ def _convert_value(value: Value):
     """
     match value:
         case Field():
-            return _convert_field(value)
+            return _convert_field(value, mapping)
         case StrCast():
             raise NotImplementedError("StrCast not implemented yet")
         case NumCast():
@@ -253,7 +252,7 @@ def _convert_value(value: Value):
             raise ValueError(f"Unsupported value type: {type(value)}")
 
 
-def _convert_expression(exp: Expression):
+def _convert_expression(exp: Expression, mapping: dict) -> Tuple[str, list[str]]:
     """
     Convert an AST Expression node to a Cypher WHERE expression string and list of match fragments.
 
@@ -267,18 +266,18 @@ def _convert_expression(exp: Expression):
     """
     match exp:
         case BinaryExpression():
-            left = _convert_value(exp.left)
-            right = _convert_value(exp.right)
+            left = _convert_value(exp.left, mapping)
+            right = _convert_value(exp.right, mapping)
             operator = exp.get_operator()
             # If field returns a list, compare using IN operator
             if (left[2] or right[2]) and operator == "=":
                 return f"{left[0]} IN {right[0]}", [left[1], right[1]]
             return f"{left[0]} {operator} {right[0]}", [left[1], right[1]]
         case Not():
-            inner, fields = _convert_expression(exp.operand)
+            inner, fields = _convert_expression(exp.operand, mapping)
             return f"{exp.get_operator()} ({inner})", fields
         case And() | Or() | Match():
-            inner = map(_convert_expression, exp.operands)
+            inner = map(lambda e: _convert_expression(e, mapping), exp.operands)
             inner = list(inner)
             operator = exp.get_operator()
             return f"{f' {operator} '.join(i[0] for i in inner)}", [f for i in inner for f in i[1]]
@@ -288,7 +287,7 @@ def _convert_expression(exp: Expression):
 
 def _remove_duplicate_matches(matches: list[str]) -> list[str]:
     """
-    Remove duplicate Cypher match fragments from the provided list.
+    Remove duplicate and empty Cypher match fragments from the provided list.
 
     Returns:
         A list of unique match fragments, preserving the original order.
@@ -323,7 +322,8 @@ def converter(ast: Condition) -> str:
     if not isinstance(ast, Condition):
         raise ValueError(f"Expected Condition node, got {type(ast)}")
 
-    where_parts, match_parts = _convert_expression(ast.expr)
+    mapping: dict = {}
+    where_parts, match_parts = _convert_expression(ast.expr, mapping)
 
     combined_where, combined_matches = [where_parts], _remove_duplicate_matches(match_parts)
 
