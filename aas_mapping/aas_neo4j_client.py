@@ -371,7 +371,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                         # Create relationship to the last created node
                         if child_nodes:
                             rel_props = {"is_list": True}
-                            if "SubmodelElementList" in node_labels:
+                            if "SubmodelElementList" in node_labels or key == "specificAssetIds":
                                 rel_props = {"se_list_index": i}
                             self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props=rel_props)
                     else:
