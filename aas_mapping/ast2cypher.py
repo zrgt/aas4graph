@@ -176,7 +176,7 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
                 if part.index("[") + 1 < len(part) - 1:
                     index = int(part[part.index("[") + 1: part.index("]")])
             case _ if part.startswith("specificAssetIds"):
-                # specificAssetIds are relations. To access by index, we need order of them, which is not implemented yet.
+                # TODO: specificAssetIds can be accessed with index as well, but not implemented yet
                 match_part += "-[:specificAssetIds]->(specificAssetIds)"
                 last_root = "specificAssetIds"
             case _:
