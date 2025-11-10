@@ -43,7 +43,7 @@ def _convert_sme(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
                     else:
                         match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{p}'}})"
                 elif len(p) > 1:
-                    match_part += f"-[:value {{se_list_index: {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
+                    match_part += f"-[:value {{list_index: {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
                 else:
                     match_part += f"-[:value]->(sme{depth}:SubmodelElement)"
                 depth += 1
@@ -201,7 +201,7 @@ def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict[st
                 if "[]" in part:
                     match_part += f"-[:specificAssetIds]->(specificAssetIds{mapping['specificAssetIds']})"
                 else:
-                    match_part += f"-[:specificAssetIds {{se_list_index: {part[-2:-1]}}}]->(specificAssetIds{mapping['specificAssetIds']})"
+                    match_part += f"-[:specificAssetIds {{list_index: {part[-2:-1]}}}]->(specificAssetIds{mapping['specificAssetIds']})"
                 last_root = f"specificAssetIds{mapping['specificAssetIds']}"
                 mapping["specificAssetIds"] += 1
             case _:
