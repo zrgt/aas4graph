@@ -4,7 +4,6 @@ import re
 from aas_mapping.ast_nodes import *
 
 
-
 def _convert_sme(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
     """
     Convert a SubmodelElement root string to a Cypher match part and last root identifier.
@@ -242,12 +241,11 @@ def _convert_value(value: Value, mapping: dict[str, int]) -> Tuple[str, str, boo
     match value:
         case Field():
             return _convert_field(value, mapping)
-        case StrCast():
-            # TODO: implement StrCast conversion
-            raise NotImplementedError("StrCast not implemented yet")
-        case NumCast():
-            # TODO: implement NumCast conversion
-            raise NotImplementedError("NumCast not implemented yet")
+        case StrCast() | NumCast() | BoolCast() | DateTimeCast():
+            inner = _convert_value(value.inner, mapping)
+            return f"{value.get_operator()}({inner[0]})", inner[1], False
+        case HexCast() | TimeCast():
+            raise NotImplementedError(f"{type(value)} cannot be converted to Cypher.")
         case StringValue() | NumberValue() | BooleanValue():
             return value.value if isinstance(value.value, (int, float, bool)) else f"'{value.value}'", "", False
         case _:
@@ -303,7 +301,6 @@ def _remove_duplicate_matches(matches: list[str]) -> list[str]:
     return unique_matches
 
 
-
 def converter(ast: Condition) -> str:
     """
     Convert an AST Condition node to a full Cypher query string.
@@ -337,4 +334,3 @@ def converter(ast: Condition) -> str:
     cypher += "\nWHERE " + " AND ".join(combined_where)
     cypher += f"\nRETURN {return_var}"
     return cypher
-
