@@ -87,6 +87,10 @@ class StrCast(Value):
     """
     inner: Value
 
+    @staticmethod
+    def get_operator() -> str:
+        return "toString"
+
     def __repr__(self): return f"Str({self.inner})"
 
 
@@ -100,7 +104,79 @@ class NumCast(Value):
     """
     inner: Value
 
+    @staticmethod
+    def get_operator() -> str:
+        return "toInteger"
+
     def __repr__(self): return f"Num({self.inner})"
+
+
+@dataclass
+class HexCast(Value):
+    """
+    Represents a hexadecimal cast operation in the AST.
+
+    Attributes:
+        inner (Value): The value to be cast to hexadecimal.
+    """
+    inner: Value
+
+    @staticmethod
+    def get_operator() -> str:
+        return "toHex"
+
+    def __repr__(self): return f"Hex({self.inner})"
+
+
+@dataclass
+class BoolCast(Value):
+    """
+    Represents a boolean cast operation in the AST.
+
+    Attributes:
+        inner (Value): The value to be cast to boolean.
+    """
+    inner: Value
+
+    @staticmethod
+    def get_operator() -> str:
+        return "toBoolean"
+
+    def __repr__(self): return f"Bool({self.inner})"
+
+
+@dataclass
+class DateTimeCast(Value):
+    """
+    Represents a datetime cast operation in the AST.
+
+    Attributes:
+        inner (Value): The value to be cast to datetime.
+    """
+    inner: Value
+
+    @staticmethod
+    def get_operator() -> str:
+        return "date"
+
+    def __repr__(self): return f"DateTime({self.inner})"
+
+
+@dataclass
+class TimeCast(Value):
+    """
+    Represents a time cast operation in the AST.
+
+    Attributes:
+        inner (Value): The value to be cast to time.
+    """
+    inner: Value
+
+    @staticmethod
+    def get_operator() -> str:
+        return "time"
+
+    def __repr__(self): return f"Time({self.inner})"
 
 
 @dataclass
@@ -126,6 +202,7 @@ class Eq(BinaryExpression):
     """
     Represents an equality expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "="
@@ -138,6 +215,7 @@ class Ne(BinaryExpression):
     """
     Represents a not-equal expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "<>"
@@ -150,6 +228,7 @@ class Gt(BinaryExpression):
     """
     Represents a greater-than expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return ">"
@@ -162,6 +241,7 @@ class Ge(BinaryExpression):
     """
     Represents a greater-than-or-equal expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return ">="
@@ -174,6 +254,7 @@ class Lt(BinaryExpression):
     """
     Represents a less-than expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "<"
@@ -186,6 +267,7 @@ class Le(BinaryExpression):
     """
     Represents a less-than-or-equal expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "<="
@@ -198,6 +280,7 @@ class Contains(BinaryExpression):
     """
     Represents a contains expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "CONTAINS"
@@ -210,6 +293,7 @@ class StartsWith(BinaryExpression):
     """
     Represents a starts-with expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "STARTS WITH"
@@ -222,6 +306,7 @@ class EndsWith(BinaryExpression):
     """
     Represents an ends-with expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "ENDS WITH"
@@ -234,6 +319,7 @@ class Regex(BinaryExpression):
     """
     Represents a regex match expression in the AST.
     """
+
     @staticmethod
     def get_operator() -> str:
         return "=~"

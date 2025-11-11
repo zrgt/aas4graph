@@ -4,6 +4,6 @@ MATCH (sm0:Submodel),
 WHERE sm0.idShort = 'TechnicalData'
   AND sme2.value = '27-37-09-05'
   AND sm0.idShort = 'TechnicalData'
-  AND sid0 = '0173-1#02-BAF016#006'
+  AND sid0.keys_value[0] = '0173-1#02-BAF016#006'
   AND sme3.value < 100
 RETURN sm0

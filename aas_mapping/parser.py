@@ -17,6 +17,10 @@ def parse_value(data: dict) -> Value:
     if "$boolean" in data: return BooleanValue(data["$boolean"])
     if "$strCast" in data: return StrCast(parse_value(data["$strCast"]))
     if "$numCast" in data: return NumCast(parse_value(data["$numCast"]))
+    if "$hexCast" in data: return HexCast(parse_value(data["$hexCast"]))
+    if "$boolCast" in data: return BoolCast(parse_value(data["$boolCast"]))
+    if "$dateTimeCast" in data: return DateTimeCast(parse_value(data["$dateTimeCast"]))
+    if "$timeCast" in data: return TimeCast(parse_value(data["$timeCast"]))
     raise ValueError(f"Unknown value type: {data}")
 
 def parse_expression(expr: dict) -> Expression:

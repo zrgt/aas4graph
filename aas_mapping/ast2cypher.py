@@ -4,7 +4,7 @@ import re
 from aas_mapping.ast_nodes import *
 
 
-def _convert_sme(root: str) -> Tuple[str, str]:
+def _convert_sme(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
     """
     Convert a SubmodelElement root string to a Cypher match part and last root identifier.
 
@@ -28,7 +28,11 @@ def _convert_sme(root: str) -> Tuple[str, str]:
         raise ValueError(f"Root does not contain $sme: {root}")
     match_part: str = "(sm:Submodel)-[:submodelElements]->"
     last_root: str = ""
-    depth = 0
+    if "sme" in mapping:
+        depth = mapping["sme"]
+    else:
+        mapping["sme"] = 0
+        depth = 0
     for part in root.split(".")[1:]:
         if "[" in part:
             for p in part.split("["):
@@ -38,7 +42,7 @@ def _convert_sme(root: str) -> Tuple[str, str]:
                     else:
                         match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{p}'}})"
                 elif len(p) > 1:
-                    match_part += f"-[:value {{se_list_index: {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
+                    match_part += f"-[:value {{list_index: {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
                 else:
                     match_part += f"-[:value]->(sme{depth}:SubmodelElement)"
                 depth += 1
@@ -50,13 +54,15 @@ def _convert_sme(root: str) -> Tuple[str, str]:
             last_root = f"sme{depth}"
             depth += 1
     if last_root != "":
+        mapping["sme"] = depth
         return match_part, last_root
-    match_part += f"(sme: SubmodelElement)"
-    last_root = "sme"
+    match_part += f"(sme{depth}: SubmodelElement)"
+    last_root = f"sme{depth}"
+    mapping["sme"] = depth + 1
     return match_part, last_root
 
 
-def _convert_root(root: str) -> Tuple[str, str]:
+def _convert_root(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
     """
     Convert the root part of a field to a Cypher match part and last root identifier.
 
@@ -83,11 +89,11 @@ def _convert_root(root: str) -> Tuple[str, str]:
             match_part += "(cd:ConceptDescription)"
             last_root = "cd"
         case _:
-            match_part, last_root = _convert_sme(root)
+            match_part, last_root = _convert_sme(root, mapping)
     return match_part, last_root
 
 
-def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, str, bool]:
+def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict[str, int]) -> Tuple[str, str, bool]:
     """
     Convert attribute elements of a field to Cypher WHERE expression and MATCH addition.
 
@@ -111,7 +117,6 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
     where_part: str = ""
     index = None
     isList = False
-    multiple_assetInformation = attribute.count("assetInformation") > 1
     for part in attribute.split("."):
         match part:
             case "id":
@@ -119,14 +124,11 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
             case "idShort":
                 where_part += f"{last_root}.idShort"
             case "assetInformation":
-                # In specification, assetInformation can be chained
-                if multiple_assetInformation:
-                    match_part += "-[:assetInformation]->(assetInformation0:AssetInformation)"
-                    last_root = "assetInformation0"
-                    multiple_assetInformation = False
-                else:
-                    match_part += "-[:assetInformation]->(assetInformation:AssetInformation)"
-                    last_root = "assetInformation"
+                if "assetInformation" not in mapping:
+                    mapping["assetInformation"] = 0
+                match_part += f"-[:assetInformation]->(assetInformation{mapping['assetInformation']}:AssetInformation)"
+                last_root = f"assetInformation{mapping['assetInformation']}"
+                mapping["assetInformation"] += 1
             case "assetKind":
                 where_part += f"{last_root}.assetKind"
             case "assetType":
@@ -151,8 +153,11 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
                 else:
                     where_part += f"{last_root}.value"
             case "externalSubjectId":
-                match_part += "-[:externalSubjectId]->(externalSubjectId)"
-                last_root = "externalSubjectId"
+                if "externalSubjectId" not in mapping:
+                    mapping["externalSubjectId"] = 0
+                match_part += f"-[:externalSubjectId]->(externalSubjectId{mapping['externalSubjectId']})"
+                last_root = f"externalSubjectId{mapping['externalSubjectId']}"
+                mapping["externalSubjectId"] += 1
             case "type":
                 # If type is part of Reference, then type is part of keys.
                 if last_root == "reference":
@@ -165,12 +170,19 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
                 else:
                     where_part += f"{last_root}.type"
             case "submodels":
-                match_part += "-[:submodels]->(submodels:Reference)"
-                last_root = "submodels"
+                if "submodels" not in mapping:
+                    mapping["submodels"] = 0
+                match_part += f"-[:submodels]->(submodels{mapping['submodels']}:Reference)"
+                last_root = f"submodels{mapping['submodels']}"
+                mapping["submodels"] += 1
             case "semanticId":
-                match_part += "-[:semanticId]->(semanticId)"
-                last_root = "semanticId"
-                if part.endswith("semanticId"):
+                if "semanticId" not in mapping:
+                    mapping["semanticId"] = 0
+                match_part += f"-[:semanticId]->(semanticId{mapping['semanticId']})"
+                last_root = f"semanticId{mapping['semanticId']}"
+                mapping["semanticId"] += 1
+                # if semanticId is used as attribute, we need to access keys_value[0]
+                if attribute.endswith("semanticId"):
                     where_part += f"{last_root}.keys_value[0]"
             case "valueType":
                 where_part += f"{last_root}.valueType"
@@ -183,18 +195,21 @@ def _convert_attribute_elements(attribute: str, last_root: str) -> Tuple[str, st
                     index = int(part[part.index("[") + 1: part.index("]")])
             case _ if part.startswith("specificAssetIds"):
                 # specificAssetIds can be referenced by index
+                if "specificAssetIds" not in mapping:
+                    mapping["specificAssetIds"] = 0
                 if "[]" in part:
-                    match_part += "-[:specificAssetIds]->(specificAssetIds)"
+                    match_part += f"-[:specificAssetIds]->(specificAssetIds{mapping['specificAssetIds']})"
                 else:
-                    match_part += f"-[:specificAssetIds {{se_list_index: {part[-2:-1]}}}]->(specificAssetIds)"
-                last_root = "specificAssetIds"
+                    match_part += f"-[:specificAssetIds {{list_index: {part[-2:-1]}}}]->(specificAssetIds{mapping['specificAssetIds']})"
+                last_root = f"specificAssetIds{mapping['specificAssetIds']}"
+                mapping["specificAssetIds"] += 1
             case _:
                 raise ValueError(f"Unknown attribute element in field: {part}")
 
     return where_part, match_part, isList
 
 
-def _convert_field(field: Field) -> Tuple[str, str, bool]:
+def _convert_field(field: Field, mapping: dict[str, int]) -> Tuple[str, str, bool]:
     """
     Convert an AST Field node to Cypher where part and match part.
 
@@ -205,13 +220,13 @@ def _convert_field(field: Field) -> Tuple[str, str, bool]:
         (where_part, match_part, isList)
     """
     root, attribute = field.name.split("#")
-    match_part, last_root = _convert_root(root)
-    where_part, match_addition, isList = _convert_attribute_elements(attribute, last_root)
+    match_part, last_root = _convert_root(root, mapping)
+    where_part, match_addition, isList = _convert_attribute_elements(attribute, last_root, mapping)
     match_part += match_addition
     return where_part, match_part, isList
 
 
-def _convert_value(value: Value):
+def _convert_value(value: Value, mapping: dict[str, int]) -> Tuple[str, str, bool]:
     """
     Convert an AST Value node to a Cypher query string and associated fields.
 
@@ -225,18 +240,19 @@ def _convert_value(value: Value):
     """
     match value:
         case Field():
-            return _convert_field(value)
-        case StrCast():
-            raise NotImplementedError("StrCast not implemented yet")
-        case NumCast():
-            raise NotImplementedError("NumCast not implemented yet")
+            return _convert_field(value, mapping)
+        case StrCast() | NumCast() | BoolCast() | DateTimeCast():
+            inner = _convert_value(value.inner, mapping)
+            return f"{value.get_operator()}({inner[0]})", inner[1], False
+        case HexCast() | TimeCast():
+            raise NotImplementedError(f"{type(value)} cannot be converted to Cypher.")
         case StringValue() | NumberValue() | BooleanValue():
             return value.value if isinstance(value.value, (int, float, bool)) else f"'{value.value}'", "", False
         case _:
             raise ValueError(f"Unsupported value type: {type(value)}")
 
 
-def _convert_expression(exp: Expression):
+def _convert_expression(exp: Expression, mapping: dict[str, int]) -> Tuple[str, list[str]]:
     """
     Convert an AST Expression node to a Cypher WHERE expression string and list of match fragments.
 
@@ -250,18 +266,18 @@ def _convert_expression(exp: Expression):
     """
     match exp:
         case BinaryExpression():
-            left = _convert_value(exp.left)
-            right = _convert_value(exp.right)
+            left = _convert_value(exp.left, mapping)
+            right = _convert_value(exp.right, mapping)
             operator = exp.get_operator()
             # If field returns a list, compare using IN operator
             if (left[2] or right[2]) and operator == "=":
                 return f"{left[0]} IN {right[0]}", [left[1], right[1]]
             return f"{left[0]} {operator} {right[0]}", [left[1], right[1]]
         case Not():
-            inner, fields = _convert_expression(exp.operand)
+            inner, fields = _convert_expression(exp.operand, mapping)
             return f"{exp.get_operator()} ({inner})", fields
         case And() | Or() | Match():
-            inner = map(_convert_expression, exp.operands)
+            inner = map(lambda e: _convert_expression(e, mapping), exp.operands)
             inner = list(inner)
             operator = exp.get_operator()
             return f"{f' {operator} '.join(i[0] for i in inner)}", [f for i in inner for f in i[1]]
@@ -269,56 +285,20 @@ def _convert_expression(exp: Expression):
             raise ValueError(f"Unsupported expression type: {type(exp)}")
 
 
-def _combine_match_parts(where_parts: list[str], match_parts: list[str]) -> Tuple[list[str], list[str]]:
+def _remove_duplicate_matches(matches: list[str]) -> list[str]:
     """
-    Combine multiple where parts and match parts into consolidated lists.
-
-    - Removes duplicates and empty fragments.
-    - Renames reused variable names (except root nodes like sm, aas, cd).
-    - Updates WHERE parts accordingly so variable renames remain consistent.
+    Remove duplicate and empty Cypher match fragments from the provided list.
 
     Returns:
-        (combined_where_parts, combined_match_parts)
+        A list of unique match fragments, preserving the original order.
     """
-    clean_matches: list[str] = []
     seen = set()
-    rename_map = {}
-    used_vars = set()
-    counter = {}
-
-    ROOTS = {"sm", "aas", "cd"}
-
-    for m in match_parts:
-        m = re.sub(r"[,\s]+", " ", m.strip())
-        if m and m not in seen:
-            seen.add(m)
-            clean_matches.append(m)
-
-    new_matches = []
-    for m in clean_matches:
-        vars_in_m = re.findall(r"\((\w+):", m)
-        for v in vars_in_m:
-            if v in ROOTS:
-                used_vars.add(v)
-                continue
-            if v in used_vars:
-                counter[v] = counter.get(v, 0) + 1
-                new_v = f"{v}{counter[v]}"
-                rename_map[v] = new_v
-                used_vars.add(new_v)
-                m = re.sub(rf"(?<!:)\b{v}\b", new_v, m)
-            else:
-                used_vars.add(v)
-        new_matches.append(m)
-
-    new_where_parts = []
-    for w in where_parts:
-        for old, new in rename_map.items():
-            w = re.sub(rf"\b{old}\b", new, w)
-        new_where_parts.append(w)
-
-    return new_where_parts, new_matches
-
+    unique_matches = []
+    for match in matches:
+        if match not in seen and match != "":
+            seen.add(match)
+            unique_matches.append(match)
+    return unique_matches
 
 
 def converter(ast: Condition) -> str:
@@ -341,10 +321,10 @@ def converter(ast: Condition) -> str:
     if not isinstance(ast, Condition):
         raise ValueError(f"Expected Condition node, got {type(ast)}")
 
-    where_expr, match_parts = _convert_expression(ast.expr)
-    where_parts = [where_expr]
+    mapping: dict[str, int] = {}
+    where_parts, match_parts = _convert_expression(ast.expr, mapping)
 
-    combined_where, combined_matches = _combine_match_parts(where_parts, match_parts)
+    combined_where, combined_matches = [where_parts], _remove_duplicate_matches(match_parts)
 
     first_match = combined_matches[0]
     match_var = re.findall(r"\((\w+):", first_match)
@@ -354,4 +334,3 @@ def converter(ast: Condition) -> str:
     cypher += "\nWHERE " + " AND ".join(combined_where)
     cypher += f"\nRETURN {return_var}"
     return cypher
-
