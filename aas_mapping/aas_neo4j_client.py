@@ -23,7 +23,7 @@ CypherClause = str
 
 KEYS_TO_IGNORE = tuple()
 SPECIFIC_RELATIONSHIPS = ("child", "references")
-ORDER_IMPORTANT_RELATIONSHIPS = ("specificAssetIds", )
+ORDER_IMPORTANT_RELATIONSHIPS = ("specificAssetIds", "supplementalSemanticIds")
 
 
 @dataclass
