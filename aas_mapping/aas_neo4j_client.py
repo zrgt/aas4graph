@@ -23,6 +23,7 @@ CypherClause = str
 
 KEYS_TO_IGNORE = tuple()
 SPECIFIC_RELATIONSHIPS = ("child", "references")
+ORDER_IMPORTANT_RELATIONSHIPS = ("specificAssetIds", )
 
 
 @dataclass
@@ -120,7 +121,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     DEFAULT_OPTIMIZATION_CLAUSES = [
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
-        "CREATE INDEX rel_se_list_index FOR () - [r:value]-() ON (r.se_list_index);"
+        "CREATE INDEX rel_list_index FOR () - [r:value]-() ON (r.list_index);"
     ]
 
     # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
@@ -371,8 +372,8 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                         # Create relationship to the last created node
                         if child_nodes:
                             rel_props = {"is_list": True}
-                            if "SubmodelElementList" in node_labels or key == "specificAssetIds":
-                                rel_props = {"se_list_index": i}
+                            if "SubmodelElementList" in node_labels or key in ORDER_IMPORTANT_RELATIONSHIPS:
+                                rel_props = {"list_index": i}
                             self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props=rel_props)
                     else:
                         logger.warning(f"Unsupported type in list: {type(item)}")
@@ -749,7 +750,7 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                 relationships,
                 key=lambda x: (
                     x.get("type"),  # Primary sort by type
-                    x.get("properties", {}).get("value", {}).get("se_list_index", float("inf"))  # Secondary sort
+                    x.get("properties", {}).get("value", {}).get("list_index", float("inf"))  # Secondary sort
                 )
             )
             for rel in sorted_relationships:
@@ -761,11 +762,11 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                 related_node_properties = get_node_properties(related_node)
                 if "properties" in rel and "is_list" in rel['properties'] and rel['properties']["is_list"]:
                     node_dict.setdefault(rel_type, []).append(related_node_properties)
-                    if "se_list_index" in rel['properties']:
-                        se_list_index = rel['properties']["se_list_index"]
-                        if len(node_dict[rel_type])-1 != se_list_index:
+                    if "list_index" in rel['properties']:
+                        list_index = rel['properties']["list_index"]
+                        if len(node_dict[rel_type])-1 != list_index:
                             logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
-                                           f"{len(node_dict[rel_type])-1} != {se_list_index}")
+                                           f"{len(node_dict[rel_type])-1} != {list_index}")
                             logger.warning(str(sorted_relationships))
                 else:
                     node_dict[rel_type] = related_node_properties
