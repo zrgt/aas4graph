@@ -125,7 +125,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
     DEFAULT_OPTIMIZATION_CLAUSES = [
         "CREATE INDEX FOR (r:Identifiable) ON (r.id);",
         "CREATE INDEX FOR (r:Referable) ON (r.idShort);",
-        "CREATE INDEX rel_se_list_index FOR () - [r:value]-() ON (r.se_list_index);"
+        "CREATE INDEX rel_list_index FOR () - [r:value]-() ON (r.list_index);"
     ]
 
     # Attributes of objects that are lists of dictionaries and should be converted to multiple lists with simple values
@@ -378,7 +378,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                             rel_props = {"is_list": True}
                             for node_label in node_labels:
                                 if node_label in LIST_ITEM_RELATIONSHIPS_WITH_INDEX and key in LIST_ITEM_RELATIONSHIPS_WITH_INDEX[node_label]:
-                                    rel_props = {"se_list_index": i}
+                                    rel_props = {"list_index": i}
                             self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props=rel_props)
                     else:
                         logger.warning(f"Unsupported type in list: {type(item)}")
@@ -753,29 +753,32 @@ class AASNeo4JClient(AASUploaderInNeo4J):
             objs = [dict(zip(keys, values)) for values in zip(*lists)]
             return objs
 
-        def add_relationships(node: Dict, node_dict: Dict, relationships: List[Dict]):
-            # Sort relationships based on type and list entries by index
-            sorted_relationships = sorted(
+        def _sort_relationships_based_on_type_and_list_entries_by_index(relationships):
+            return sorted(
                 relationships,
                 key=lambda x: (
                     x.get("type"),  # Primary sort by type
-                    x.get("properties", {}).get("value", {}).get("se_list_index", float("inf"))  # Secondary sort
+                    x.get("properties", {}).get("value", {}).get("list_index", float("inf"))  # Secondary sort
                 )
             )
+
+        def add_relationships(node: Dict, node_dict: Dict, relationships: List[Dict]):
+            sorted_relationships = _sort_relationships_based_on_type_and_list_entries_by_index(relationships)
+
             for rel in sorted_relationships:
                 rel_type = rel['label']
                 if rel['start']['id'] != node['id'] or rel_type in SPECIFIC_RELATIONSHIPS:
-                        continue
+                    continue
 
                 related_node = next(n for n in subgraph['nodes'] if n['id'] == rel['end']['id'])
                 related_node_properties = get_node_properties(related_node)
                 if "properties" in rel and "is_list" in rel['properties'] and rel['properties']["is_list"]:
                     node_dict.setdefault(rel_type, []).append(related_node_properties)
-                    if "se_list_index" in rel['properties']:
-                        se_list_index = rel['properties']["se_list_index"]
-                        if len(node_dict[rel_type])-1 != se_list_index:
-                            logger.warning(f"Index of the submodel element does not match with the saved index in the graph:"
-                                           f"{len(node_dict[rel_type])-1} != {se_list_index}")
+                    if "list_index" in rel['properties']:
+                        list_index = rel['properties']["list_index"]
+                        if len(node_dict[rel_type])-1 != list_index:
+                            logger.warning(f"Index of the list does not match with the saved index in the graph:"
+                                           f"{len(node_dict[rel_type])-1} != {list_index}")
                             logger.warning(str(sorted_relationships))
                 else:
                     node_dict[rel_type] = related_node_properties
@@ -784,7 +787,7 @@ class AASNeo4JClient(AASUploaderInNeo4J):
                 add_relationships(related_node, related_node_properties,
                                   [r for r in subgraph['relationships'] if r['start']['id'] == related_node['id']])
 
-
+                # FIXME: Take a look here, may be the lines below and above should be replaced
                 # Handle specific keys for certain node types
                 related_node_properties = group_prefixed_props_back_to_list_of_dicts_prop(related_node['labels'], related_node_properties)
                 related_node_properties = group_prefixed_props_back_to_dict_prop(related_node['labels'], related_node_properties)
