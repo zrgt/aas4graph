@@ -23,6 +23,11 @@ CypherClause = str
 
 KEYS_TO_IGNORE = tuple()
 SPECIFIC_RELATIONSHIPS = ("child", "references")
+LIST_ITEM_RELATIONSHIPS_WITH_INDEX = {
+    "SubmodelElementList": ["value"],
+    "AssetInformation": ["specificAssetIds"],
+    "HasSemantics": ["supplementalSemanticIds"],
+}
 
 
 @dataclass
@@ -368,11 +373,12 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                         nodes.extend(child_nodes)
                         self._merge_relationships(relationships, child_rels)
 
-                        # Create relationship to the last created node
+                        # Create relationship to direct child node, which is the last one
                         if child_nodes:
                             rel_props = {"is_list": True}
-                            if "SubmodelElementList" in node_labels:
-                                rel_props = {"se_list_index": i}
+                            for node_label in node_labels:
+                                if node_label in LIST_ITEM_RELATIONSHIPS_WITH_INDEX and key in LIST_ITEM_RELATIONSHIPS_WITH_INDEX[node_label]:
+                                    rel_props = {"se_list_index": i}
                             self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'], rel_props=rel_props)
                     else:
                         logger.warning(f"Unsupported type in list: {type(item)}")
