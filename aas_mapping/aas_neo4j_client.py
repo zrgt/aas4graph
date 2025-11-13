@@ -534,7 +534,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                 logging.warning(f"Error during UID cleanup for batch: {e}")
 
     def upload_all_aas_json_from_dir(self, directory: str, file_batch_size: int = 50,
-                                     db_batch_size: int = 10000) -> AASUploadStats:
+                                     db_batch_size: int = 10000, max_num_of_batches=10000) -> AASUploadStats:
         """Upload JSON files from directory into Neo4j using batch processing."""
         stats = AASUploadStats()
         json_files = [f for f in os.listdir(directory) if isfile(join(directory, f)) and f.endswith('.json')]
@@ -570,6 +570,10 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
             batch_total_time = time.time() - batch_start_time
             logger.info(f"Batch {batch_num + 1} completed in {batch_total_time:.2f} seconds")
+
+            if batch_num == max_num_of_batches:
+                logger.warning("Max number of batches reached")
+                break
 
         stats.finish()
         return stats
@@ -805,13 +809,16 @@ def main():
     def optimized_upload_all_submodels(submodels_folder="examples/aas/test_dataset/"):
         # Use the OptimizedAASNeo4JClient for batch processing
         optimized_client = AASUploaderInNeo4J(uri="bolt://localhost:7687", user="neo4j", password="12345678")
-        # optimized_client._truncate_db()
+        optimized_client._remove_all()
         optimized_client._remove_all_indexes_and_constraints()
         optimized_client.optimize_database()
         # set timer
         import time
         start_time = time.time()
-        result = optimized_client.upload_all_aas_json_from_dir(submodels_folder, file_batch_size=100, db_batch_size=30000)
+        result = optimized_client.upload_all_aas_json_from_dir(submodels_folder,
+                                                               file_batch_size=100,
+                                                               db_batch_size=30000,
+                                                               max_num_of_batches=1)
         end_time = time.time()
         print(f"Execution time: {end_time - start_time} seconds")
 
