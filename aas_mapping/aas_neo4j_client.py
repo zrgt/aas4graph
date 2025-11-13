@@ -151,6 +151,7 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
 
         # e.g. {HASH: uid}
         self.deduplicated_nodes: dict[str: int] = {}
+        self.deduplicated_to_existing_uid_map: dict[int: int] = {}
         self.deduplicated_rels: set[str] = set()
         self.uid_to_internal_id: dict[str: int] = {}
 
@@ -203,7 +204,6 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
                 property_list_of_dicts_to_model_as_multiple_simple_props.extend(
                     self.DICT_PROP_AS_MULTIPLE_PROPS[label])
         return property_list_of_dicts_to_model_as_multiple_simple_props
-
 
     def _gen_unique_node_name(self) -> int:
         self.uid_counter += 1
@@ -415,6 +415,55 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
             self._merge_relationships(batch_relationships, relationships)
         return batch_nodes, batch_relationships
 
+    def _deduplicate_nodes(self, grouped_nodes: dict[tuple[str], list[dict]]):
+        for label_tuple, nodes in grouped_nodes.items():
+            # Check if any of the labels in this tuple should be deduplicated
+            if not any(lbl in self.DEDUPLICATED_OBJECT_TYPES for lbl in label_tuple):
+                continue
+
+            filtered_nodes = []
+            for node in nodes:
+                # Deterministic JSON hash from properties
+                node_copy = deepcopy(node)
+                node_copy.pop("uid")
+                hash_value = hashlib.sha256(json.dumps(node_copy, sort_keys=True).encode()).hexdigest()
+
+                if hash_value in self.deduplicated_nodes:
+                    # This node already exists (deduplicate)
+                    existing_uid = self.deduplicated_nodes[hash_value]
+                    self.deduplicated_to_existing_uid_map[node["uid"]] = existing_uid
+                else:
+                    node["hash"] = hash_value
+                    # First time we see this node -> keep it
+                    self.deduplicated_nodes[hash_value] = node["uid"]
+                    filtered_nodes.append(node)
+
+            # Replace node list with deduplicated version
+            grouped_nodes[label_tuple] = filtered_nodes
+        return grouped_nodes
+
+    def _deduplicate_rels(self, relationships: dict[tuple[str], list[dict]]):
+        # --- 🔧 Rewrite relationships to use deduplicated UIDs ---
+        for rel_types, rel_list in relationships.items():
+            updated_rels = []
+            for rel in rel_list:
+                # Update UIDs if they exist in the deduplicated map
+                rel["from_uid"] = self.deduplicated_to_existing_uid_map.get(rel["from_uid"], rel["from_uid"])
+                rel["to_uid"] = self.deduplicated_to_existing_uid_map.get(rel["to_uid"], rel["to_uid"])
+
+                # Deterministic JSON hash from properties
+                hash_value = hashlib.sha256(json.dumps(rel, sort_keys=True).encode()).hexdigest()
+
+                if hash_value not in self.deduplicated_rels:
+                    self.deduplicated_rels.add(hash_value)
+                    updated_rels.append(rel)
+
+            # Replace with deduplicated and updated relationships
+            rel_list[:] = updated_rels
+
+        return relationships
+
+
     def _upload_nodes_and_relationships(self, nodes: List[Dict], relationships: Dict[str, List],
                                         stats: AASUploadStats = None,
                                         exist_uid_to_internal_id: Optional[Dict[int, int]] = None,
@@ -426,56 +475,11 @@ class AASUploaderInNeo4J(BaseNeo4JClient):
         # Group nodes and filter relationships for this batch
         grouped_nodes = self._group_nodes_by_label(nodes)
 
-        # --- 🔧 Deduplication step ---
-        deduplicated_uid_map = {}  # new_uid -> existing_uid mapping for this batch
-
-        for label_tuple in list(grouped_nodes.keys()):
-            # Check if any of the labels in this tuple should be deduplicated
-            if not any(lbl in self.DEDUPLICATED_OBJECT_TYPES for lbl in label_tuple):
-                continue
-
-            filtered_nodes = []
-            for node in grouped_nodes[label_tuple]:
-                node_uid = node["uid"]
-
-                node_copy = deepcopy(node)
-                node_copy.pop("uid")
-                # Deterministic JSON hash from properties
-                hash_input = json.dumps(node_copy, sort_keys=True)
-                hash_value = hashlib.sha256(hash_input.encode()).hexdigest()
-
-                if hash_value in self.deduplicated_nodes:
-                    # This node already exists (deduplicate)
-                    existing_uid = self.deduplicated_nodes[hash_value]
-                    deduplicated_uid_map[node_uid] = existing_uid
-                else:
-                    node["hash"] = hash_value
-                    # First time we see this node -> keep it
-                    self.deduplicated_nodes[hash_value] = node_uid
-                    filtered_nodes.append(node)
-
-            # Replace node list with deduplicated version
-            grouped_nodes[label_tuple] = filtered_nodes
-
-        # --- 🔧 Rewrite relationships to use deduplicated UIDs ---
-        if deduplicated_uid_map:
-            for rel_type, rel_list in relationships.items():
-                for rel in rel_list:
-                    if rel["from_uid"] in deduplicated_uid_map:
-                        rel["from_uid"] = deduplicated_uid_map[rel["from_uid"]]
-                    if rel["to_uid"] in deduplicated_uid_map:
-                        rel["to_uid"] = deduplicated_uid_map[rel["to_uid"]]
-
-        if deduplicated_uid_map: # TODO: Fast half-working temporal solution. DELETE!
-            for rel_type, rel_list in relationships.items():
-                unique_rels = []
-                seen = set()
-                for rel in rel_list:
-                    key = (rel['from_uid'], rel['to_uid'])
-                    if key not in seen:
-                        seen.add(key)
-                        unique_rels.append(rel)
-                relationships[rel_type] = unique_rels
+        # --- 🔧 Deduplication steps ---
+        # TODO: the deduplication data should be saved late in a DB
+        # TODO: Consider the deduplication while CRUD operations on AAS Server
+        grouped_nodes = self._deduplicate_nodes(grouped_nodes)
+        relationships = self._deduplicate_rels(relationships)
 
         # --- Continue with database operations ---
         with self.driver.session() as session:
