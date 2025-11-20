@@ -42,10 +42,11 @@ YOUR_PATH_TO_NEO4J\neo4j-community-5.26.10\bin\neo4j console
 ## Add the AAS to Neo4j
 
 ```python
-from aas_mapping.aas_neo4j_client import AASNeo4JClient
+from aas_mapping.aas_neo4j_adapter.aas_neo4j_client import AASNeo4JClient
 
-aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="12345678")
-aas_neo4j_client.upload_aas_json_file("SOME_AAS.json")
+aas_neo4j_client = AASNeo4JClient(uri="bolt://localhost:7687", user="neo4j", password="12345678", 
+                                  model_config=AAS_NEO4J_MODEL_CONFIG)
+aas_neo4j_client.upload_json_file("SOME_AAS.json")
 ```
 
 ## Show all nodes in Neo4j Browser
