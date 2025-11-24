@@ -2,7 +2,7 @@ import os
 import json
 import unittest
 from pathlib import Path
-from aas_mapping.parser import parse_query
+from aas_mapping.aas_neo4j_adapter.querification.aasql_to_ast import parse_aasql_query
 
 class TestQuerriesToAstExamples(unittest.TestCase):
     def test_examples_parse_to_expected_ast(self):
@@ -17,7 +17,7 @@ class TestQuerriesToAstExamples(unittest.TestCase):
                         query = json.load(f)
                     with open(solution_path) as f:
                         solution_repr = f.read()
-                    result = parse_query(query)
+                    result = parse_aasql_query(query)
                     self.assertEqual(solution_repr, repr(result), f"Error at {file_name}")
 
 

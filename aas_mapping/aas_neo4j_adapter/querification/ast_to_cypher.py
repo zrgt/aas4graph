@@ -1,7 +1,7 @@
 from typing import Tuple
 import re
 
-from aas_mapping.ast_nodes import *
+from aas_mapping.aas_neo4j_adapter.querification.ast_nodes import *
 
 
 def _convert_sme(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
@@ -42,6 +42,7 @@ def _convert_sme(root: str, mapping: dict[str, int]) -> Tuple[str, str]:
                     else:
                         match_part += f"-[:value]->(sme{depth}:SubmodelElement {{idShort: '{p}'}})"
                 elif len(p) > 1:
+                    # FIXME: take a look here: why we have a list_index for SubmodelELements?
                     match_part += f"-[:value {{list_index: {p[:-1]}}}]->(sme{depth}:SubmodelElement)"
                 else:
                     match_part += f"-[:value]->(sme{depth}:SubmodelElement)"
@@ -187,6 +188,7 @@ def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict[st
             case "valueType":
                 where_part += f"{last_root}.valueType"
             case "language":
+                # FIXME: this should be flexible. We should check here the config and build a Cypher based on config
                 where_part += f"{last_root}.value_language"
                 isList = True
             case _ if part.startswith("keys"):

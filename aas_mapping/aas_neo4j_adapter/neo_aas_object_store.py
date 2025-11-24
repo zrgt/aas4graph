@@ -1,12 +1,12 @@
 import json
 from typing import Generic, Iterator, Iterable
 
-from basyx.aas.adapter.json import AASToJsonEncoder, AASFromJsonDecoder, StrictAASFromJsonDecoder
+from basyx.aas.adapter.json import AASToJsonEncoder, StrictAASFromJsonDecoder
 from basyx.aas.model import AbstractObjectStore, Identifiable, Identifier
 
 from basyx.aas.model.provider import _IT
 
-from aas_mapping.aas_neo4j_client import AASNeo4JClient
+from aas_mapping.aas_neo4j_adapter.aas_neo4j_client import AASNeo4JClient
 
 
 class Neo4jObjectStore(AbstractObjectStore[_IT], Generic[_IT]):
