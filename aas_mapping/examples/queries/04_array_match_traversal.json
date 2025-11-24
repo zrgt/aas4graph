@@ -1,0 +1,18 @@
+{
+    "$condition": {
+      "$match": [
+        { "$eq": [
+            { "$field": "$sme.Components[].Name#value" },
+            { "$strVal": "Motor" }
+          ]
+        },
+        { "$eq": [
+            { "$field": "$sme.Components[].Status#value" },
+            { "$strVal": "Active" }
+          ]
+        }
+      ]
+    }
+  }
+  
+  

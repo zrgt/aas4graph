@@ -1,5 +1,5 @@
-MATCH (sm0)-[:child*0..]->(sme0:SubmodelElement {idShort:"Documents"})-[:child]->(sme1:SubmodelElement)-[:child]->(sme2:SubmodelElement {idShort:"DocumentClassification"})-[:child]->(sme3:SubmodelElement {idShort:"Class"}),
-      (sme1)-[:child]->(sme4:SubmodelElement {idShort:"DocumentVersion"})-[:child]->(mlp0:MultiLanguageProperty {idShort:"SMLLanguages"})-[:value]->(ls0:LangString)
+MATCH (sm0:Submodel)-[:submodelElements]->(sme0:SubmodelElement {idShort:"Documents"})-[:value]->(sme1:SubmodelElement)-[:value]->(sme2:SubmodelElement {idShort:"DocumentClassification"})-[:value]->(sme3:SubmodelElement {idShort:"Class"}),
+      (sme1)-[:value]->(sme4:SubmodelElement {idShort:"DocumentVersion"})-[:value]->(mlp0:MultiLanguageProperty {idShort:"SMLLanguages"})
 WHERE sme3.value = '03-01'
-  AND ls0.language = 'nl'
+  AND 'nl' IN mlp0.value_language
 RETURN sm0
