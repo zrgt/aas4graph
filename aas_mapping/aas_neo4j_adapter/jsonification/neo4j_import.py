@@ -65,7 +65,7 @@ class JsonToNeo4jImporter(BaseNeo4JClient):
         WITH split(labelsString, ",") AS labels, $data[labelsString] AS nodesProperties
         
         UNWIND nodesProperties AS nodeProperties
-        CREATE (n:$(labels))
+        CALL apoc.create.node(labels, nodeProperties) YIELD node AS n
         SET n = nodeProperties
         
         RETURN elementId(n) AS internal_id, nodeProperties.uid AS uid
