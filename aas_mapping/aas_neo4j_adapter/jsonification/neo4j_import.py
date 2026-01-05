@@ -313,11 +313,11 @@ class JsonToNeo4jImporter(BaseNeo4JClient):
                         rel_props = {"is_list": True}
 
                         if self.model_config.all_list_item_relationships_have_index is True:
-                            rel_props = {"list_index": i}
+                            rel_props["list_index"] = i
                         elif self.model_config.list_item_relationships_with_index:
                             for node_label in node_labels:
                                 if key in self.model_config.list_item_relationships_with_index.get(node_label, []):
-                                    rel_props = {"list_index": i}
+                                    rel_props["list_index"] = i
                                     break
                         self._add_relationship(relationships, key, node_uid, child_nodes[-1]['uid'],
                                                rel_props=rel_props)
