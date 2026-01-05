@@ -11,7 +11,7 @@ from neo4j import Session
 from neo4j.exceptions import TransientError, ClientError
 
 from aas_mapping.aas_neo4j_adapter.base import BaseNeo4JClient, Neo4jModelConfig
-from aas_mapping.utils import UploadStats
+from aas_mapping.aas_neo4j_adapter.utils import UploadStats
 
 logger = logging.getLogger(__name__)
 
