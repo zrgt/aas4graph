@@ -89,8 +89,8 @@ AAS_NEO4J_MODEL_CONFIG = Neo4jModelConfig(
 class AASNeo4JClient(JsonToNeo4jImporter, JsonFromNeo4jExporter):
     node_names: Set[str] = set()
 
-    def __init__(self, uri: str = None, user: str = None, password: Optional[str] = None, model_config: Neo4jModelConfig = None):
-        BaseNeo4JClient.__init__(self, uri=uri, user=user, password=password, model_config=model_config or AAS_NEO4J_MODEL_CONFIG)
+    def __init__(self, uri: str, user: str, password: Optional[str] = None, model_config: Neo4jModelConfig = None, **kwargs):
+        super().__init__(uri=uri, user=user, password=password, model_config=model_config or AAS_NEO4J_MODEL_CONFIG, **kwargs)
 
     def _process_json_data(self, json_data: Dict[str, Any]) -> Tuple[List[Dict], Dict[str, List]]:
         """
